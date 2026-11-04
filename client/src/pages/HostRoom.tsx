@@ -6,6 +6,7 @@ import { BannerAdSlot } from '../components/BannerAdSlot';
 import { isWebGLAvailable } from '../three/webgl';
 import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
 import { LEVEL_CLASS, LEVEL_LABELS } from '../levels';
+import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 
 const HostCanvas3D = lazy(() => import('../three/HostCanvas3D'));
 
@@ -121,6 +122,11 @@ export function HostRoom() {
                 <span className="badge">
                   문제 {room.question.index + 1} / {room.question.total}
                 </span>
+                {room.question.category && (
+                  <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>
+                    {CATEGORY_LABELS[room.question.category]}
+                  </span>
+                )}
                 <p className="question-strip-text">{room.question.text}</p>
                 <div className="timer-bar">
                   <div
@@ -137,6 +143,11 @@ export function HostRoom() {
               <div className="reveal-banner stack">
                 <span>
                   정답: {room.lastResult.correctAnswer} · {room.lastResult.questionText}
+                  {room.lastResult.category && (
+                    <span className={`badge badge-category ${CATEGORY_CLASS[room.lastResult.category]}`} style={{ marginLeft: 8 }}>
+                      {CATEGORY_LABELS[room.lastResult.category]}
+                    </span>
+                  )}
                 </span>
                 {room.lastResult.explanation && <p className="explanation-text">{room.lastResult.explanation}</p>}
               </div>

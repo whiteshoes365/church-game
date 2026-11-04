@@ -2,6 +2,7 @@ export type RoomStatus = 'lobby' | 'question' | 'reveal' | 'finished';
 export type Capacity = 4 | 8 | 'unlimited';
 export type MapTheme = 'sanctuary' | 'playground' | 'forest';
 export type Level = 'elementary' | 'middle' | 'high' | 'youth';
+export type Category = 'bible' | 'general' | 'nonsense';
 
 export interface PlayerSnapshot {
   id: string;
@@ -16,6 +17,7 @@ export interface QuestionSnapshot {
   index: number;
   total: number;
   text: string | null;
+  category: Category | null;
   deadline: number | null;
 }
 
@@ -24,6 +26,7 @@ export interface LastResult {
   correctAnswer: 'O' | 'X';
   correctPlayerIds: string[];
   explanation?: string | null;
+  category?: Category | null;
 }
 
 export interface Rect {

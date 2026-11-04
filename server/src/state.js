@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { QUESTIONS_BY_LEVEL, DEFAULT_LEVEL, normalizeLevel } from './questions.js';
+import { DEFAULT_LEVEL, DEFAULT_QUESTION_COUNT, normalizeLevel, selectQuizQuestions } from './questions.js';
 
 export const QUESTION_DURATION_MS = 15000;
 
@@ -23,6 +23,25 @@ export const PHYSICS_TICK_MS = 50; // ~20 Hz authoritative simulation
 
 const churches = new Map(); // id -> { id, name, normalized }
 const rooms = new Map(); // id -> room
+
+// Per-church memory of recently-played question ids, so a church doesn't see
+// the same questions over and over across consecutive games. Keeps only the
+// last RECENT_GAMES_PER_CHURCH games' worth of ids; resets on server restart
+// (in-memory only, no DB), which is fine for this use case.
+const RECENT_GAMES_PER_CHURCH = 5;
+const recentGamesByChurch = new Map(); // churchId -> array of id-arrays, oldest first
+
+function recentIdsForChurch(churchId) {
+  const games = recentGamesByChurch.get(churchId) || [];
+  return new Set(games.flat());
+}
+
+function recordPlayedForChurch(churchId, ids) {
+  const games = recentGamesByChurch.get(churchId) || [];
+  games.push(ids);
+  while (games.length > RECENT_GAMES_PER_CHURCH) games.shift();
+  recentGamesByChurch.set(churchId, games);
+}
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -230,7 +249,7 @@ export function listRooms(churchId) {
   return [...rooms.values()].filter((r) => r.churchId === churchId);
 }
 
-export function createRoom({ churchId, title, map, capacity, questionSeconds, level }) {
+export function createRoom({ churchId, title, map, capacity, questionSeconds, level, questionCount }) {
   const church = getChurch(churchId);
   if (!church) throw new Error('교회를 찾을 수 없어요.');
   const room = {
@@ -243,7 +262,8 @@ export function createRoom({ churchId, title, map, capacity, questionSeconds, le
     hostSocket: null,
     players: new Map(), // deviceId -> player
     status: 'lobby', // lobby | question | reveal | finished
-    questionOrder: [],
+    questionCount: questionCount ? Math.max(1, Math.round(Number(questionCount))) : DEFAULT_QUESTION_COUNT,
+    questions: [],
     currentIndex: -1,
     answers: new Map(), // deviceId -> 'O' | 'X'
     deadline: null,
@@ -285,20 +305,12 @@ export function joinRoom(room, { deviceId, nickname, avatar }) {
   return player;
 }
 
-function shuffledIndices(n) {
-  const arr = Array.from({ length: n }, (_, i) => i);
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
 export function startQuiz(room, questionCount) {
   clearTimer(room);
-  const questions = QUESTIONS_BY_LEVEL[room.level];
-  const count = Math.min(questionCount || questions.length, questions.length);
-  room.questionOrder = shuffledIndices(questions.length).slice(0, count);
+  const count = questionCount ? Math.max(1, Math.round(Number(questionCount))) : room.questionCount;
+  const excludeIds = recentIdsForChurch(room.churchId);
+  room.questions = selectQuizQuestions({ level: room.level, count, excludeIds });
+  recordPlayedForChurch(room.churchId, room.questions.map((q) => q.id));
   room.currentIndex = -1;
   room.lastResult = null;
   for (const p of room.players.values()) {
@@ -308,8 +320,8 @@ export function startQuiz(room, questionCount) {
 }
 
 export function currentQuestion(room) {
-  if (room.currentIndex < 0 || room.currentIndex >= room.questionOrder.length) return null;
-  return QUESTIONS_BY_LEVEL[room.level][room.questionOrder[room.currentIndex]];
+  if (room.currentIndex < 0 || room.currentIndex >= room.questions.length) return null;
+  return room.questions[room.currentIndex];
 }
 
 export function clearTimer(room) {
@@ -326,7 +338,7 @@ export function advanceQuestion(room, onTimeout) {
   room.lastResult = null;
   for (const p of room.players.values()) p.side = null;
 
-  if (room.currentIndex >= room.questionOrder.length) {
+  if (room.currentIndex >= room.questions.length) {
     room.status = 'finished';
     room.deadline = null;
     return;
@@ -371,6 +383,7 @@ export function revealAnswer(room) {
     correctAnswer: q.answer,
     correctPlayerIds,
     explanation: q.explanation ?? null,
+    category: q.category ?? null,
   };
 }
 
@@ -400,8 +413,9 @@ export function serializeRoom(room) {
       room.status === 'question' || room.status === 'reveal'
         ? {
             index: room.currentIndex,
-            total: room.questionOrder.length,
+            total: room.questions.length,
             text: q ? q.text : null,
+            category: q ? q.category : null,
             deadline: room.deadline,
           }
         : null,

@@ -7,6 +7,7 @@ import { BODY_COLORS, DEFAULT_AVATAR_CONFIG, HATS, SKIN_TONES, encodeAvatar, typ
 import { AvatarIcon } from '../components/AvatarIcon';
 import { isWebGLAvailable } from '../three/webgl';
 import type { RoomSnapshot } from '../protocol';
+import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 
 const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
@@ -282,6 +283,11 @@ export function PlayerRoom() {
             <span className="badge">
               문제 {room.question.index + 1} / {room.question.total}
             </span>
+            {room.question.category && (
+              <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>
+                {CATEGORY_LABELS[room.question.category]}
+              </span>
+            )}
             <p className="question-text">{room.question.text}</p>
             <div className="timer-bar">
               <div
@@ -311,6 +317,11 @@ export function PlayerRoom() {
         {room.status === 'reveal' && room.lastResult && (
           <div className="card stack">
             <p className="question-text">{room.lastResult.questionText}</p>
+            {room.lastResult.category && (
+              <span className={`badge badge-category ${CATEGORY_CLASS[room.lastResult.category]}`}>
+                {CATEGORY_LABELS[room.lastResult.category]}
+              </span>
+            )}
             <div className="reveal-banner">정답은 {room.lastResult.correctAnswer} 예요!</div>
             {room.lastResult.explanation && <p className="explanation-text">{room.lastResult.explanation}</p>}
             {me && (

@@ -23,6 +23,10 @@
   --level-high: #f0a030;
   --level-youth: #8b5fbf;
 
+  --category-bible: #6b4b2e;
+  --category-general: #2ea0a0;
+  --category-nonsense: #d6629a;
+
   font-family: 'Galmuri11', 'DungGeunMo', monospace;
 }
 
@@ -236,6 +240,22 @@ button {
 
 .badge-level.level-youth {
   background: var(--level-youth);
+}
+
+.badge-category {
+  display: inline-block;
+}
+
+.badge-category.category-bible {
+  background: var(--category-bible);
+}
+
+.badge-category.category-general {
+  background: var(--category-general);
+}
+
+.badge-category.category-nonsense {
+  background: var(--category-nonsense);
 }
 
 /* ---- kid-friendly 4-block level picker ---- */

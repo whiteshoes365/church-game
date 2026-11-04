@@ -1,0 +1,154 @@
+[
+  {
+    "id": "example-elementary-bible-001",
+    "level": "elementary",
+    "category": "bible",
+    "text": "하나님은 사랑이시에요.",
+    "answer": "O",
+    "explanation": "요한일서 4:8. 하나님은 사랑이시라고 말해요.",
+    "ref": "요한일서 4:8",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-elementary-bible-002",
+    "level": "elementary",
+    "category": "bible",
+    "text": "요셉에게는 형이 한 명도 없었어요.",
+    "answer": "X",
+    "explanation": "창세기 37:2-4. 요셉에게는 형들이 여러 명 있었어요.",
+    "ref": "창세기 37:2-4",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-elementary-general-001",
+    "level": "elementary",
+    "category": "general",
+    "text": "사자는 '동물의 왕'이라고 불려요.",
+    "answer": "O",
+    "explanation": "사자는 흔히 '동물의 왕'이라고 불려요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-elementary-nonsense-001",
+    "level": "elementary",
+    "category": "nonsense",
+    "text": "채소 이름이면서 '여러 가지 종류'라는 뜻도 있는 글자는 '가지'예요.",
+    "answer": "O",
+    "explanation": "채소 '가지'와 '여러 가지(종류)'라고 할 때 쓰는 '가지'가 같은 말이라서 생긴 말장난이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-middle-bible-001",
+    "level": "middle",
+    "category": "bible",
+    "text": "다윗은 밧세바의 남편 우리야를 전쟁터에서 죽게 만들었어요.",
+    "answer": "O",
+    "explanation": "사무엘하 11:14-17. 다윗이 우리야를 최전선에 두어 죽게 했어요.",
+    "ref": "사무엘하 11:14-17",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-middle-bible-002",
+    "level": "middle",
+    "category": "bible",
+    "text": "예레미야는 '기쁨의 선지자'라는 별명으로 불려요.",
+    "answer": "X",
+    "explanation": "예레미야애가 등에서 드러나듯 예레미야는 보통 '눈물의 선지자'라고 불려요.",
+    "ref": "예레미야애가 1:1-2",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-middle-general-001",
+    "level": "middle",
+    "category": "general",
+    "text": "대한민국의 법정 공휴일인 설날과 추석은 음력 날짜를 기준으로 정해요.",
+    "answer": "O",
+    "explanation": "설날(음력 1월 1일)과 추석(음력 8월 15일)은 음력 기준으로 날짜가 정해져요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-middle-nonsense-001",
+    "level": "middle",
+    "category": "nonsense",
+    "text": "겨울에 내리는 것과 얼굴에 있는 것 둘 다 가리키는 글자를 묻는 넌센스 퀴즈의 정답은 '코'예요.",
+    "answer": "X",
+    "explanation": "정답은 '눈'이에요. 겨울에 내리는 눈(雪)과 얼굴에 있는 눈(眼)이 같은 글자라서 생긴 말장난이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-high-bible-001",
+    "level": "high",
+    "category": "bible",
+    "text": "고린도전서 13장은 흔히 '사랑장'이라고 불려요.",
+    "answer": "O",
+    "explanation": "고린도전서 13:1-13. 사랑에 대해 다루어 '사랑장'이라는 별명으로 불려요.",
+    "ref": "고린도전서 13:1-13",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-high-bible-002",
+    "level": "high",
+    "category": "bible",
+    "text": "출애굽기의 모세오경 중 신명기 다음에 레위기가 와요.",
+    "answer": "X",
+    "explanation": "모세오경의 순서는 창세기, 출애굽기, 레위기, 민수기, 신명기예요. 신명기가 마지막이에요.",
+    "ref": "레위기 1:1, 신명기 1:1",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-high-general-001",
+    "level": "high",
+    "category": "general",
+    "text": "세계에서 가장 높은 산은 에베레스트산이에요.",
+    "answer": "O",
+    "explanation": "에베레스트산(높이 약 8,849m)은 세계에서 가장 높은 산이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-high-nonsense-001",
+    "level": "high",
+    "category": "nonsense",
+    "text": "마시는 음료와 타고 다니는 교통수단을 동시에 가리키는 글자를 묻는 넌센스 퀴즈의 정답은 '배'예요.",
+    "answer": "X",
+    "explanation": "정답은 '차'예요. 마시는 '차(tea)'와 타는 '차(car)'가 같은 글자로 쓰여서 생긴 말장난이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-youth-bible-001",
+    "level": "youth",
+    "category": "bible",
+    "text": "빌립보서는 바울이 감옥에서 쓴 편지들 중 하나로 알려져 있어요.",
+    "answer": "O",
+    "explanation": "빌립보서 1:7,13. 바울이 옥중에서 쓴 편지로 알려져 있어요.",
+    "ref": "빌립보서 1:7,13",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-youth-bible-002",
+    "level": "youth",
+    "category": "bible",
+    "text": "야고보서는 바울이 쓴 편지예요.",
+    "answer": "X",
+    "explanation": "야고보서 1:1. 이 편지는 바울이 아니라 야고보가 쓴 것으로 알려져 있어요.",
+    "ref": "야고보서 1:1",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-youth-general-001",
+    "level": "youth",
+    "category": "general",
+    "text": "유엔(UN) 본부는 뉴욕에 있어요.",
+    "answer": "O",
+    "explanation": "국제연합(UN) 본부는 미국 뉴욕에 있어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "example-youth-nonsense-001",
+    "level": "youth",
+    "category": "nonsense",
+    "text": "옷을 넣는 가구, 물건을 파는 곳, 된장 같은 음식까지 모두 가리키는 글자를 묻는 넌센스 퀴즈의 정답은 '집'이에요.",
+    "answer": "X",
+    "explanation": "정답은 '장'이에요. 가구인 '장(欌)', '시장'의 '장(場)', 된장·고추장의 '장(醬)'이 모두 같은 소리 '장'으로 쓰이는 말장난이에요.",
+    "week": "2026-46"
+  }
+]

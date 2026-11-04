@@ -1,8 +1,10 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import WebSocket from 'ws';
-import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL } from '../server/src/questions.js';
+import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL, CATEGORIES, DEFAULT_QUESTION_COUNT } from '../server/src/questions.js';
 import { ZONES, MAP_BOUNDS, WALK_SPEED, RUN_SPEED, CRAWL_SPEED } from '../server/src/state.js';
 
 // Question text is unique across all levels (verify looks questions up by
@@ -502,6 +504,113 @@ async function main() {
       }
       log(`quiz questions for level '${level}' all drawn from that level's set (3/3 rounds)`);
     }
+
+    // 7. 카테고리 혼합(성경/상식/넌센스), 최근 출제 회피, 주간 문항 검증 스크립트
+    log('--- category mixing & weekly question-bank tests ---');
+    const host4 = new Client('host4');
+    await host4.ready();
+    const church4Name = `검증교회-카테고리-${Date.now()}`;
+    host4.send('findOrCreateChurch', { name: church4Name });
+    const church4 = await host4.waitFor('churchJoined');
+    const church4Id = church4.church.id;
+
+    // Plays a full game to completion (host-only, no players needed) and returns the
+    // { text, category } of every question asked, in play order.
+    async function playFullGame(host, roomId, questionCount) {
+      host.send('startQuiz', { roomId, ...(questionCount ? { questionCount } : {}) });
+      const seen = [];
+      let state = await host.waitFor('roomState', (msg) => msg.room.id === roomId && msg.room.status === 'question');
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        seen.push({ text: state.room.question.text, category: state.room.question.category });
+        host.send('reveal', { roomId });
+        await host.waitFor('roomState', (msg) => msg.room.id === roomId && msg.room.status === 'reveal');
+        host.send('nextQuestion', { roomId });
+        state = await host.waitFor(
+          'roomState',
+          (msg) => msg.room.id === roomId && (msg.room.status === 'question' || msg.room.status === 'finished'),
+        );
+        if (state.room.status === 'finished') break;
+      }
+      return seen;
+    }
+
+    // 7a. 기본(30문제) 게임: 카테고리가 모두 채워져 있고, 비율이 대략 70/20/10(정확히
+    // 21/6/3)에 맞고, 모두 선택한 level 소속이며, 한 게임 안에서 중복이 없어야 함.
+    host4.send('createRoom', { churchId: church4Id, title: '카테고리방', map: 'sanctuary', capacity: 'unlimited', level: 'elementary' });
+    const catRoom = await host4.waitFor('roomCreated');
+    const catRoomId = catRoom.room.id;
+    assert(catRoom.room.level === 'elementary', '카테고리 검증방의 level이 elementary여야 함');
+
+    const game1 = await playFullGame(host4, catRoomId); // questionCount 생략 -> 기본값
+    assert(game1.length === DEFAULT_QUESTION_COUNT, `기본 문제 수는 ${DEFAULT_QUESTION_COUNT}개여야 하는데 ${game1.length}개`);
+    assert(
+      game1.every((q) => q.category && CATEGORIES.includes(q.category)),
+      '모든 문제의 snapshot에 유효한 category가 있어야 함',
+    );
+    const elemTexts = new Set(QUESTIONS_BY_LEVEL.elementary.map((q) => q.text));
+    assert(game1.every((q) => elemTexts.has(q.text)), '출제된 모든 문제가 선택한 level(elementary)의 문제 세트에 속해야 함');
+    const game1Texts = game1.map((q) => q.text);
+    assert(new Set(game1Texts).size === game1Texts.length, '한 게임 안에서 같은 문제가 중복 출제되면 안 됨');
+
+    const game1Counts = { bible: 0, general: 0, nonsense: 0 };
+    for (const q of game1) game1Counts[q.category] += 1;
+    log(`30-question mix: ${JSON.stringify(game1Counts)}`);
+    assert(game1Counts.bible === 21, `30문제 중 성경(bible)은 21개여야 하는데 ${game1Counts.bible}개`);
+    assert(game1Counts.general === 6, `30문제 중 상식(general)은 6개여야 하는데 ${game1Counts.general}개`);
+    assert(game1Counts.nonsense === 3, `30문제 중 넌센스(nonsense)는 3개여야 하는데 ${game1Counts.nonsense}개`);
+    log('category presence + 70/20/10 mixing ratio + level sourcing + no-repeats-in-game all ok');
+
+    // 7b. 같은 교회에서 연속으로 게임을 돌리면, 문제 뱅크가 허락하는 한(이번 경우 성경
+    // 문제 풀 30개 중 7+7=14개만 쓰므로 충분히 허락됨) 최근에 나온 문제를 피해서 출제해야 함.
+    host4.send('createRoom', { churchId: church4Id, title: '최근출제회피방', map: 'sanctuary', capacity: 'unlimited', level: 'middle' });
+    const recentRoom = await host4.waitFor('roomCreated');
+    const recentRoomId = recentRoom.room.id;
+
+    const recentGame1 = await playFullGame(host4, recentRoomId, 10);
+    const recentGame2 = await playFullGame(host4, recentRoomId, 10);
+    const bibleTexts1 = new Set(recentGame1.filter((q) => q.category === 'bible').map((q) => q.text));
+    const bibleTexts2 = new Set(recentGame2.filter((q) => q.category === 'bible').map((q) => q.text));
+    const overlap = [...bibleTexts1].filter((t) => bibleTexts2.has(t));
+    assert(
+      overlap.length === 0,
+      `문제 뱅크가 충분한 상황(성경 30개 중 7+7=14개만 사용)에서는 같은 교회의 연속된 두 게임 사이에 겹치는 성경 문제가 없어야 하는데 겹침: ${JSON.stringify(overlap)}`,
+    );
+    log('recent-avoidance across two consecutive games in the same church verified (0 bible overlap)');
+
+    host4.close();
+
+    // 7c. add-week.mjs 검증 스크립트: 잘못된 파일은 거부하고, docs/example-week.json은
+    // dry-run으로 받아들이면서 실제 파일을 쓰지는 않아야 함.
+    const addWeekScript = path.join(ROOT, 'scripts/add-week.mjs');
+    const exampleWeekPath = path.join(ROOT, 'docs/example-week.json');
+
+    const badWeekPath = path.join(os.tmpdir(), `church-game-bad-week-${Date.now()}.json`);
+    fs.writeFileSync(
+      badWeekPath,
+      JSON.stringify([
+        {
+          id: 'verify-bad-001',
+          level: 'not-a-real-level',
+          category: 'bible',
+          text: '검증용으로 일부러 망가뜨린 문항이에요.',
+          answer: 'O',
+          explanation: 'ref가 빠져 있어요.',
+          week: '2026-46',
+        },
+      ]),
+    );
+    const badResult = spawnSync(process.execPath, [addWeekScript, badWeekPath, '--dry-run'], { cwd: ROOT, encoding: 'utf-8' });
+    fs.unlinkSync(badWeekPath);
+    assert(badResult.status !== 0, 'add-week.mjs는 잘못된 level/ref 누락이 있는 파일을 거부(종료 코드 0이 아님)해야 함');
+    log('add-week.mjs rejects an invalid file (non-zero exit) ok');
+
+    const exampleWeekFileBefore = fs.existsSync(path.join(ROOT, 'server/data/questions/2026-46.json'));
+    const exampleResult = spawnSync(process.execPath, [addWeekScript, exampleWeekPath, '--dry-run'], { cwd: ROOT, encoding: 'utf-8' });
+    assert(exampleResult.status === 0, `add-week.mjs는 docs/example-week.json을 dry-run으로 통과시켜야 하는데 종료 코드 ${exampleResult.status}\n${exampleResult.stdout}\n${exampleResult.stderr}`);
+    const exampleWeekFileAfter = fs.existsSync(path.join(ROOT, 'server/data/questions/2026-46.json'));
+    assert(exampleWeekFileAfter === exampleWeekFileBefore, 'add-week.mjs --dry-run은 실제 파일을 쓰면 안 됨');
+    log('add-week.mjs accepts docs/example-week.json in --dry-run mode without writing ok');
 
     host3.close();
     lp.close();

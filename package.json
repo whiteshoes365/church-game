@@ -10,6 +10,7 @@
   "scripts": {
     "dev:server": "npm run dev -w server",
     "dev:client": "npm run dev -w client",
+    "add-week": "node scripts/add-week.mjs",
     "build": "npm install --include=dev && npm run build -w client",
     "verify": "node verify/verify.mjs",
     "start": "node server/src/index.js",

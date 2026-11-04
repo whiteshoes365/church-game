@@ -16,6 +16,8 @@ const CAPACITY_OPTIONS: { value: Capacity; label: string }[] = [
   { value: 'unlimited', label: '제한 없음' },
 ];
 
+const QUESTION_COUNT_OPTIONS = [10, 20, 30] as const;
+
 export function HostRooms() {
   const { churchId } = useParams<{ churchId: string }>();
   const location = useLocation();
@@ -27,6 +29,7 @@ export function HostRooms() {
   const [map, setMap] = useState<MapTheme>('sanctuary');
   const [capacity, setCapacity] = useState<Capacity>(8);
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
+  const [questionCount, setQuestionCount] = useState<number>(30);
 
   useEffect(() => {
     gameSocket.connect();
@@ -47,7 +50,7 @@ export function HostRooms() {
 
   function createRoom() {
     if (!title.trim()) return;
-    gameSocket.send('createRoom', { churchId, title: title.trim(), map, capacity, level });
+    gameSocket.send('createRoom', { churchId, title: title.trim(), map, capacity, level, questionCount });
   }
 
   return (
@@ -90,6 +93,18 @@ export function HostRooms() {
                 onClick={() => setCapacity(c.value)}
               >
                 {c.label}
+              </button>
+            ))}
+          </div>
+          <p className="picker-label">문제 수를 골라주세요</p>
+          <div className="row">
+            {QUESTION_COUNT_OPTIONS.map((n) => (
+              <button
+                key={n}
+                className={`btn btn-sm ${questionCount === n ? 'btn-primary' : ''}`}
+                onClick={() => setQuestionCount(n)}
+              >
+                {n}문제
               </button>
             ))}
           </div>

@@ -1,103 +1,134 @@
 # RESULT
 
-## 4 difficulty levels for the OX Bible quiz (2026-11-04)
+## Question bank as JSON data + category mixing (2026-11-04)
 
-Added four selectable difficulty levels — 초등(elementary), 중등(middle), 고등(high), 청년(youth) — each
-with its own ~30-question OX bank, wired end to end (server question selection, protocol, room
-create/list/host UI, verify coverage). `toss-app/` was not touched.
+Moved the OX quiz question bank out of `server/src/questions.js` and into versioned JSON
+data files under `server/data/questions/<YYYY-WW>.json` (ISO week), loaded at server
+startup — no DB. Added two new content categories (general knowledge, nonsense/pun) on
+top of the existing bible questions, wired end-to-end so each game mixes categories
+~70/20/10, and added a validation script for adding new weekly question files.
+`toss-app/` was not touched. `VERIFY_WS_URL` support is preserved.
 
-## Question content (`server/src/questions.js`)
+## Data (`server/data/questions/2026-45.json`)
 
-- `LEVELS = ['elementary', 'middle', 'high', 'youth']`, `LEVEL_LABELS` (Korean), `DEFAULT_LEVEL = 'elementary'`.
-- `QUESTIONS_BY_LEVEL[level]` — 30 questions per level, 120 total. Every question has `{ id, text, answer, explanation }`;
-  `explanation` is a short Korean sentence citing book/chapter:verse, shown on reveal.
-- `normalizeLevel(level)` / `questionsForLevel(level)` fall back to `DEFAULT_LEVEL` for any unrecognized value.
-- The original 30-question set was kept as the basis of the elementary level (same simple wording/well-known
-  stories); ~9 of the weaker-fit/duplicative true statements were swapped for new false (X) statements on
-  other well-known stories so O/X stays balanced, rather than keeping a skewed 24 O/6 X split.
-- **Every question text is globally unique across all 120 questions** (verified by script), since `verify.mjs`
-  looks up a question's answer by text alone, independent of which level it belongs to.
-- Every answer was checked against the Bible text (no quotes used beyond common, uncontroversial renderings).
-  Youth-level authorship/theology questions stick to what the Bible states about itself (e.g. Exodus 24:4 for
-  Mosaic authorship, epistle openings that name their sender, Hebrews' known anonymity) or hedge with
-  "전통적으로"(traditionally) for early-church-tradition attributions, and avoid denomination-specific or
-  scholarly-disputed claims (no higher-criticism authorship disputes, no eschatology-position questions, etc.).
+- Migrated the original 120 bible questions from `server/src/questions.js` into this
+  file (`category: 'bible'`), adding a `ref` field to every one (parsed from the
+  existing explanation text, or filled in by hand where the explanation didn't lead
+  with a citation) and a `week: '2026-45'` field.
+- Fixed the elementary manger question per request: text is now `'아기 예수님은
+  베들레헴에서 태어나 구유에 누이셨어요.'` (answer `O`, ref `누가복음 2:7`).
+- Added a starter set of **general** (상식) and **nonsense** (넌센스) questions for the
+  same week, ~9 general + 5 nonsense per level (36 + 20 = 56 new questions), kid-safe,
+  accurate, and non-controversial. Nonsense questions follow a "the answer to this pun
+  riddle is ___" O/X format with the real wordplay explained in `explanation`.
+- Every id and `text` is unique across the whole 176-question bank (checked at load
+  time and by `scripts/add-week.mjs`).
 
-**Counts per level** (verified by script, each level O/X-balanced):
+**Totals per level × category (O/X split):**
 
-| Level | Label | Count | O | X |
+| Level | 성경(bible) | 상식(general) | 넌센스(nonsense) | Level total |
 |---|---|---|---|---|
-| elementary | 초등 | 30 | 15 | 15 |
-| middle | 중등 | 30 | 15 | 15 |
-| high | 고등 | 30 | 15 | 15 |
-| youth | 청년 | 30 | 15 | 15 |
-| **Total** | | **120** | **60** | **60** |
+| elementary (초등) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
+| middle (중등) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
+| high (고등) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
+| youth (청년) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
+| **Total** | **120** | **36** | **20** | **176** |
 
-**Sample questions (2 per level):**
+**2 sample nonsense questions (with answers):**
 
-- 초등: "노아는 큰 홍수를 피하려고 커다란 배(방주)를 만들었어요." → **O** (창세기 6:14) · "엘리야는 걸어서 세상을 떠났어요." → **X** (실제로는 불병거를 타고 하늘로 올라감, 열왕기하 2:11)
-- 중등: "야곱은 얍복강에서 하나님(천사)과 씨름한 후 이름이 이스라엘로 바뀌었어요." → **O** (창세기 32:24-28) · "기드온은 3만 2천 명의 큰 군대로 미디안을 물리쳤어요." → **X** (실제로는 300명, 사사기 7:7)
-- 고등: "북이스라엘은 앗시리아 제국에 의해 멸망했어요." → **O** (열왕기하 17장) · "히브리서는 구약성경에 포함된 책이에요." → **X** (신약성경 27권 중 하나)
-- 청년: "에베소서는 사람이 자신의 선한 행위로 구원을 얻는다고 가르쳐요." → **X** (실제로는 은혜로 구원받는다고 가르침, 에베소서 2:8-9) · "로마서는 사람이 행위가 아니라 하나님의 은혜와 믿음으로 의롭다 하심을 받는다는 가르침을 중심으로 다뤄요." → **O** (로마서 3:23-24, 5:1)
+- "세상에서 가장 뜨거운 과일은 '천도복숭아'예요." → **O** — 복숭아 이름 '천도'가 숫자
+  1000(천)과 온도를 나타내는 '도'처럼 들려서 생긴 말장난이에요.
+- "세상에서 가장 빠른 개는 '진돗개'예요." → **X** — 정답은 '번개'예요. 번개의 '개' 글자
+  때문에 생긴 말장난이거든요.
 
-## Protocol / server changes
+## `server/src/questions.js` (now a loader, not data)
 
-- `createRoom` accepts optional `level` (`msg.level` in `index.js` → `createRoom({ ..., level })` in `state.js`);
-  invalid/missing values fall back to `'elementary'` via `normalizeLevel`.
-- `room.level` is stored on the room and included in both `serializeRoom` (snapshot) and `serializeRoomSummary`
-  (room list). `startQuiz`/`currentQuestion` now draw from `QUESTIONS_BY_LEVEL[room.level]` instead of a single
-  global array.
-- `revealAnswer` now sets `lastResult.explanation` from the current question's `explanation` field. Backward
-  compatible: `LastResult.explanation` is optional in the client type, and old clients ignore the extra field.
+Reads every `*.json` file under `server/data/questions/`, errors on any duplicate `id`
+across files, and exposes the same surface other modules already depended on —
+`LEVELS`, `LEVEL_LABELS`, `DEFAULT_LEVEL`, `QUESTIONS_BY_LEVEL`, `QUESTIONS`,
+`normalizeLevel`, `questionsForLevel` — plus new exports: `CATEGORIES`,
+`CATEGORY_LABELS`, `DEFAULT_QUESTION_COUNT` (30), `CATEGORY_RATIOS` (0.7/0.2/0.1),
+`ALL_QUESTIONS`, `QUESTIONS_BY_LEVEL_CATEGORY`, `categoryCounts(total)`, and
+`selectQuizQuestions({ level, count, excludeIds })`.
 
-## Client changes
+`selectQuizQuestions` fills each category's desired share first, falls back to other
+categories (then the full level pool) if a category runs short, prefers ids not in
+`excludeIds`, and shuffles the result.
 
-- **`client/src/protocol.ts`**: new `Level` type; `RoomSnapshot`/`RoomSummary` gain `level: Level`; `LastResult`
-  gains optional `explanation?: string | null`.
-- **`client/src/levels.ts`** (new): shared `LEVEL_OPTIONS`/`LEVEL_LABELS`/`LEVEL_CLASS` used by all screens below.
-- **`client/src/pages/HostRooms.tsx`**: new 2×2 "난이도를 골라주세요" block picker (`.level-picker`/`.level-block`,
-  big colored buttons — green/blue/orange/purple for 초등/중등/고등/청년), defaulting to 초등; selected level is
-  sent with `createRoom`. Room list items now show a `badge-level` badge alongside the lobby/진행중 status badge.
-- **`client/src/pages/HostRoom.tsx`**: header shows the room's level badge next to the player count; the reveal
-  banner now also renders `lastResult.explanation` (new `.explanation-text` style) when present.
-- **`client/src/pages/PlayerRooms.tsx`**: room list items show the same level badge as the host's list.
-- **`client/src/pages/PlayerRoom.tsx`**: reveal card shows the explanation text under the O/X result banner when present.
-- **`client/src/index.css`**: added `--level-*` color vars, `.badge-level`, `.level-picker`/`.level-block`
-  (kid-friendly big buttons, matching the existing chunky-block visual style), `.explanation-text`.
+## Server (`state.js` / `index.js`)
 
-## Verify coverage (`verify/verify.mjs`)
+- `createRoom` accepts optional `questionCount` (stored as `room.questionCount`,
+  defaulting to 30); `startQuiz(room, questionCount)` uses the explicit value if given,
+  else the room's default, and calls `selectQuizQuestions` for `room.level`.
+- Per-church in-memory history (`recentGamesByChurch`, last 5 games) is excluded first
+  when selecting a new game's questions, so a church sees fresh questions across
+  consecutive games wherever the bank is large enough to allow it; resets on restart
+  (no DB), as specified.
+- `room.questions` now holds the full selected question objects (replacing the old
+  index-based `room.questionOrder`); `currentQuestion`, `advanceQuestion`,
+  `revealAnswer`, and `serializeRoom` were updated accordingly. The question snapshot
+  and `lastResult` both now include `category`.
 
-Kept `VERIFY_WS_URL` support, the buffered `waitFor`, and all existing church/room/score/movement tests
-unchanged. Added a new "difficulty level tests" section (uses a fresh church/host/player so it doesn't disturb
-the earlier scenarios) covering:
-- Default level: `createRoom` without `level` returns `room.level === 'elementary'` in both the `roomCreated`
-  snapshot and `listRooms` summary.
-- Invalid level (`'not-a-real-level'`) falls back to `'elementary'` without erroring.
-- Each of the 4 levels: creating a room with that `level` returns the same value in the snapshot and in the
-  room list summary.
-- Quiz question sourcing: starts a 3-question quiz for `middle` and separately for `youth`, and for every
-  question revealed, asserts its text is a member of that level's question set and *not* a member of any other
-  level's set (cross-checked against `QUESTIONS_BY_LEVEL` imported from `server/src/questions.js`).
+## Client
 
-Question lookup in the pre-existing helpers (`answerFor`) was switched from the old single `QUESTIONS` array to
-a flattened `ALL_QUESTIONS` built from `QUESTIONS_BY_LEVEL`, since questions are now level-scoped but text is
-still globally unique.
+- `protocol.ts`: new `Category` type; `QuestionSnapshot`/`LastResult` gain `category`.
+- New `client/src/categories.ts`: `CATEGORY_LABELS`/`CATEGORY_CLASS` (성경/상식/넌센스).
+- `HostRoom.tsx` / `PlayerRoom.tsx`: small category badge shown next to the question
+  (host strip, player question card) and on the reveal banner.
+- `HostRooms.tsx`: room-create screen gets a 10/20/30 question-count picker, sent as
+  `questionCount` in `createRoom`.
+- `index.css`: `--category-*` colors and `.badge-category`/`.category-*` classes,
+  matching the existing level-badge styling.
+
+## `scripts/add-week.mjs` (+ `npm run add-week`, `docs/example-week.json`)
+
+Validates a weekly question JSON file — per-field schema, `level`/`category`
+membership, `O`/`X` answer, `ref` required for `bible`, `week` format and consistency,
+duplicate `id`/`text` within the file and against the whole existing bank — then
+writes (merging if the week file already exists) into
+`server/data/questions/<week>.json`. Recommended per-level counts (30: ~21 bible, 6
+general, 3 nonsense) and O/X balance are warnings only. Any validation error exits
+non-zero and writes nothing. `--dry-run` runs all validation/warnings but never writes.
+`docs/example-week.json` is a small valid example (week `2026-46`, all 4 levels, all 3
+categories) used by both the docs and `verify.mjs`.
+
+## `docs/WEEKLY.md`
+
+Korean doc explaining the weekly format (30/level/week, ~21/6/3 split), every field's
+meaning, how to run `npm run add-week -- <file>` (and `--dry-run`), and the git
+add/commit/push flow to deploy.
+
+## Verify (`verify/verify.mjs`)
+
+Kept `VERIFY_WS_URL`, buffered `waitFor`, and all pre-existing scenarios unchanged
+(church/room, movement/zones, difficulty levels). Added a new section:
+
+- **Categories present + mixing ratio + level sourcing + no repeats**: plays a full
+  default (30-question) game end-to-end and asserts every question has a valid
+  `category`, the exact 21/6/3 bible/general/nonsense split, every question belongs to
+  the room's level, and no question text repeats within the game.
+- **Recent-avoidance across two games, same church**: plays two consecutive
+  10-question games in the same room/church and asserts zero overlap in the bible
+  questions used (bank has 30 bible questions for 7+7=14 needed, so the bank "allows"
+  full avoidance).
+- **add-week validation**: spawns `scripts/add-week.mjs --dry-run` on a deliberately
+  broken file (invalid level, missing bible `ref`) and asserts a non-zero exit; spawns
+  it on `docs/example-week.json --dry-run` and asserts exit 0 and that no
+  `server/data/questions/2026-46.json` file gets written.
 
 ## Verification performed
 
 - `npm run build` — passes (`tsc` clean, `vite build` succeeds).
-- `npm run verify` — passes, run 3 times consecutively, no flakes.
-- Content script check: all 120 questions have unique text, unique ids, valid `O`/`X` answers, and a non-empty
-  `explanation`; O/X counts are exactly 15/15 per level (60/60 overall).
-- Manual browser check (Playwright + Chromium against the built client served by the server): host "방 만들기"
-  screen shows the 2×2 level picker defaulting to 초등 selected; picking 중등 and creating a room shows a
-  "중등" badge on the host room screen header and in both the host's and player's room lists.
+- `npm run verify` — passes, run **3 times** consecutively, no flakes, including all
+  new category/recent-avoidance/add-week checks.
+- Manually ran `scripts/add-week.mjs` against `docs/example-week.json` (both normal and
+  `--dry-run`) and against a hand-crafted broken file, confirming correct accept/reject
+  behavior and that re-running on already-merged content is rejected as duplicate
+  id/text (not silently re-merged).
 
-## Caveats
+## Deploy note
 
-- Youth-level theology questions intentionally stay within material broadly shared across Protestant churches
-  (e.g. justification by faith in Romans/Galatians/Ephesians, the Trinity not being a literal Bible word) and
-  avoid denomination-specific or scholarly-disputed claims (e.g. no higher-criticism authorship disputes for
-  Isaiah/Pentateuch, no eschatology-position questions).
-- `QUESTIONS` is still exported from `questions.js` (aliased to the elementary set) since nothing imports it
-  directly anymore, but keeping it avoids an unnecessary breaking removal for any external tooling.
+`server/data/questions/*.json` are plain files tracked by git (nothing in `.gitignore`
+excludes them), so a normal Render build/deploy picks them up automatically — no DB
+migration or extra build step needed. No commit was made as part of this change; the
+working tree is left for review before committing/pushing.
