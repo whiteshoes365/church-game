@@ -124,8 +124,12 @@ export function HostRoom() {
         <div className={`map-area ${MAP_CLASS[room.map]}`}>
           {room.status !== 'lobby' && (
             <div className="map-zones">
-              <div className="map-zone">O</div>
-              <div className="map-zone">X</div>
+              <div className="map-zone">
+                <div className="map-zone-sign o">O</div>
+              </div>
+              <div className="map-zone">
+                <div className="map-zone-sign x">X</div>
+              </div>
             </div>
           )}
           <div className="map-avatars">
@@ -133,7 +137,9 @@ export function HostRoom() {
               const pos = positionFor(p);
               return (
                 <div key={p.id} className="map-avatar" style={{ left: pos.left, top: pos.top }}>
-                  <AvatarIcon avatarId={p.avatar} size={36} />
+                  <div className="map-avatar-sprite">
+                    <AvatarIcon avatarId={p.avatar} size={36} />
+                  </div>
                   <span className="map-avatar-name">{p.nickname}</span>
                 </div>
               );

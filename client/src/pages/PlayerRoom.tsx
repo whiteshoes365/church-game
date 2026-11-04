@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { getDeviceId } from '../deviceId';
-import { AVATAR_OPTIONS } from '../avatars';
+import { BODY_COLORS, DEFAULT_AVATAR_CONFIG, HATS, SKIN_TONES, encodeAvatar, type AvatarConfig } from '../avatars';
 import { AvatarIcon } from '../components/AvatarIcon';
 import type { RoomSnapshot } from '../protocol';
 
@@ -16,7 +16,8 @@ export function PlayerRoom() {
   const [room, setRoom] = useState<RoomSnapshot | null>(null);
   const [joined, setJoined] = useState(false);
   const [nickname, setNickname] = useState('');
-  const [avatar, setAvatar] = useState(AVATAR_OPTIONS[0].id);
+  const [avatarConfig, setAvatarConfig] = useState<AvatarConfig>(DEFAULT_AVATAR_CONFIG);
+  const avatar = useMemo(() => encodeAvatar(avatarConfig), [avatarConfig]);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -68,16 +69,53 @@ export function PlayerRoom() {
             onChange={(e) => setNickname(e.target.value)}
           />
 
-          <div className="avatar-grid">
-            {AVATAR_OPTIONS.map((a) => (
-              <div
-                key={a.id}
-                className={`avatar-pick ${avatar === a.id ? 'selected' : ''}`}
-                onClick={() => setAvatar(a.id)}
-              >
-                <AvatarIcon avatarId={a.id} />
-              </div>
-            ))}
+          <div className="avatar-builder card">
+            <div className="avatar-preview">
+              <AvatarIcon avatarId={avatar} size={72} />
+            </div>
+
+            <p className="picker-label">피부색</p>
+            <div className="swatch-row">
+              {SKIN_TONES.map((color, i) => (
+                <button
+                  key={color}
+                  type="button"
+                  aria-label={`피부색 ${i + 1}`}
+                  className={`swatch ${avatarConfig.skin === i ? 'selected' : ''}`}
+                  style={{ background: color }}
+                  onClick={() => setAvatarConfig((c) => ({ ...c, skin: i }))}
+                />
+              ))}
+            </div>
+
+            <p className="picker-label">옷 색깔</p>
+            <div className="swatch-row">
+              {BODY_COLORS.map((color, i) => (
+                <button
+                  key={color}
+                  type="button"
+                  aria-label={`옷 색깔 ${i + 1}`}
+                  className={`swatch ${avatarConfig.body === i ? 'selected' : ''}`}
+                  style={{ background: color }}
+                  onClick={() => setAvatarConfig((c) => ({ ...c, body: i }))}
+                />
+              ))}
+            </div>
+
+            <p className="picker-label">모자</p>
+            <div className="hat-row">
+              {HATS.map((h, i) => (
+                <button
+                  key={h.id}
+                  type="button"
+                  className={`hat-pick ${avatarConfig.hat === i ? 'selected' : ''}`}
+                  onClick={() => setAvatarConfig((c) => ({ ...c, hat: i }))}
+                >
+                  <AvatarIcon avatarId={encodeAvatar({ ...avatarConfig, hat: i })} size={36} />
+                  <span>{h.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           <button className="btn btn-primary" onClick={join} disabled={!nickname.trim()}>

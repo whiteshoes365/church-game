@@ -1,18 +1,30 @@
+@import url('https://cdn.jsdelivr.net/npm/galmuri/dist/galmuri.css');
+
 :root {
   --accent: #3182f6;
   --accent-dark: #1b64da;
-  --bg: #f2f4f6;
-  --surface: #ffffff;
-  --text: #191f28;
-  --text-dim: #6b7684;
-  --border: #e5e8eb;
-  --o-color: #3182f6;
-  --x-color: #ff5a5f;
-  font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Apple SD Gothic Neo', 'Segoe UI', Roboto, sans-serif;
+  --bg: #cfe8f3;
+  --surface: #e8e2d0;
+  --text: #1c2330;
+  --text-dim: #5a6472;
+  --border: #0d1117;
+  --o-color: #45b35c;
+  --x-color: #e2483d;
+
+  --stone-lo: #d6d2c4;
+  --stone-hi: #efece2;
+  --stone-shadow: #8c8878;
+  --wood-lo: #8a5a35;
+  --wood-hi: #a9743f;
+  --wood-shadow: #5c3a20;
+
+  font-family: 'Galmuri11', 'DungGeunMo', monospace;
 }
 
 * {
   box-sizing: border-box;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 html,
@@ -25,6 +37,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
+  font-family: 'Galmuri11', 'DungGeunMo', monospace;
 }
 
 button {
@@ -37,6 +50,8 @@ button {
   flex-direction: column;
   align-items: center;
   padding: 24px 16px 48px;
+  background: repeating-linear-gradient(0deg, #cfe8f3 0 40px, #c3e0ef 40px 80px),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.03) 0 2px, transparent 2px 40px);
 }
 
 .screen-narrow {
@@ -50,6 +65,7 @@ button {
   font-weight: 700;
   margin: 8px 0 4px;
   text-align: center;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.15);
 }
 
 .subtitle {
@@ -59,10 +75,13 @@ button {
   text-align: center;
 }
 
+/* ---- stone block panel ---- */
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  background: linear-gradient(135deg, var(--stone-hi) 25%, var(--stone-lo) 25%, var(--stone-lo) 50%, var(--stone-hi) 50%, var(--stone-hi) 75%, var(--stone-lo) 75%);
+  background-size: 16px 16px;
+  border: 4px solid var(--border);
+  box-shadow: inset -4px -4px 0 0 var(--stone-shadow), inset 4px 4px 0 0 rgba(255, 255, 255, 0.5);
+  border-radius: 0;
   padding: 20px;
   width: 100%;
 }
@@ -70,28 +89,37 @@ button {
 .input {
   width: 100%;
   padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
+  border-radius: 0;
+  border: 4px solid var(--border);
   font-size: 16px;
+  font-family: inherit;
   background: var(--surface);
   color: var(--text);
+  box-shadow: inset 2px 2px 0 0 rgba(0, 0, 0, 0.15);
 }
 
 .input:focus {
-  outline: 2px solid var(--accent);
-  border-color: var(--accent);
+  outline: none;
+  border-color: var(--accent-dark);
 }
 
+/* ---- chunky beveled block buttons ---- */
 .btn {
   width: 100%;
   padding: 14px 16px;
-  border-radius: 12px;
-  border: none;
+  border-radius: 0;
+  border: 4px solid var(--border);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
+  font-family: inherit;
   cursor: pointer;
-  background: var(--border);
+  background: #bfc7cf;
   color: var(--text);
+  box-shadow: inset -4px -4px 0 0 rgba(0, 0, 0, 0.25), inset 4px 4px 0 0 rgba(255, 255, 255, 0.6);
+}
+
+.btn:active {
+  box-shadow: inset 4px 4px 0 0 rgba(0, 0, 0, 0.25), inset -4px -4px 0 0 rgba(255, 255, 255, 0.4);
 }
 
 .btn-primary {
@@ -103,6 +131,7 @@ button {
   background: var(--border);
   color: var(--text-dim);
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-sm {
@@ -129,8 +158,8 @@ button {
   justify-content: space-between;
   align-items: center;
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 4px solid var(--border);
+  border-radius: 0;
   background: var(--surface);
   cursor: pointer;
 }
@@ -152,8 +181,9 @@ button {
   align-items: center;
   padding: 16px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  border: 4px solid var(--border);
+  border-radius: 0;
+  box-shadow: inset -3px -3px 0 0 rgba(0, 0, 0, 0.1), inset 3px 3px 0 0 rgba(255, 255, 255, 0.5);
   cursor: pointer;
   text-align: left;
 }
@@ -175,39 +205,86 @@ button {
 
 .badge {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  background: rgba(49, 130, 246, 0.1);
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: 0;
+  border: 2px solid var(--border);
 }
 
-.avatar-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-}
-
-.avatar-pick {
+/* ---- avatar builder (player join) ---- */
+.avatar-builder {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.avatar-preview {
+  display: flex;
   justify-content: center;
-  padding: 10px;
-  border-radius: 14px;
-  border: 2px solid transparent;
+  padding: 8px 0 12px;
+}
+
+.picker-label {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 6px 0 0;
+  color: var(--text-dim);
+}
+
+.swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.swatch {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--border);
+  border-radius: 0;
+  cursor: pointer;
+  box-shadow: inset -2px -2px 0 0 rgba(0, 0, 0, 0.25), inset 2px 2px 0 0 rgba(255, 255, 255, 0.4);
+}
+
+.swatch.selected {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.hat-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border: 3px solid var(--border);
+  border-radius: 0;
   background: var(--surface);
   cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--text);
 }
 
-.avatar-pick.selected {
+.hat-pick.selected {
   border-color: var(--accent);
+  background: #fff;
 }
 
 .timer-bar {
   width: 100%;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--border);
+  height: 10px;
+  border-radius: 0;
+  border: 2px solid var(--border);
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -217,6 +294,7 @@ button {
   transition: width 0.2s linear;
 }
 
+/* ---- phone player: huge O/X blocks ---- */
 .ox-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -225,12 +303,18 @@ button {
 
 .ox-button {
   padding: 40px 0;
-  border-radius: 20px;
-  border: none;
-  font-size: 48px;
+  border-radius: 0;
+  border: 5px solid var(--border);
+  font-size: 56px;
   font-weight: 800;
+  font-family: inherit;
   color: #fff;
   cursor: pointer;
+  box-shadow: inset -6px -6px 0 0 rgba(0, 0, 0, 0.25), inset 6px 6px 0 0 rgba(255, 255, 255, 0.35);
+}
+
+.ox-button:active {
+  box-shadow: inset 6px 6px 0 0 rgba(0, 0, 0, 0.25), inset -6px -6px 0 0 rgba(255, 255, 255, 0.2);
 }
 
 .ox-button.o {
@@ -262,12 +346,20 @@ button {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  background: linear-gradient(135deg, var(--wood-hi) 25%, var(--wood-lo) 25%, var(--wood-lo) 50%, var(--wood-hi) 50%, var(--wood-hi) 75%, var(--wood-lo) 75%);
+  background-size: 24px 24px;
 }
 
 .host-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.host-header .title,
+.host-header .subtitle {
+  color: #fff;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.4);
 }
 
 .host-main {
@@ -279,22 +371,36 @@ button {
 
 .map-area {
   position: relative;
-  border-radius: 24px;
+  border-radius: 0;
+  border: 6px solid var(--border);
   overflow: hidden;
   min-height: 480px;
-  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.2);
 }
 
-.map-sanctuary {
-  background: #eef2ff;
+/* grass base + grid lines + dirt patches, built entirely from CSS gradients */
+.map-sanctuary,
+.map-playground,
+.map-forest {
+  background-color: #5fb14a;
+  background-image: linear-gradient(0deg, rgba(0, 0, 0, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.1) 1px, transparent 1px),
+    repeating-linear-gradient(
+      45deg,
+      #8b5a2b 0 36px,
+      #8b5a2b 36px 72px,
+      transparent 72px 108px,
+      transparent 108px 324px
+    );
+  background-size: 36px 36px, 36px 36px, 324px 324px;
 }
 
 .map-playground {
-  background: #eafff0;
+  background-color: #6fc957;
 }
 
 .map-forest {
-  background: #e8f5e9;
+  background-color: #3f8f45;
 }
 
 .map-zones {
@@ -309,9 +415,27 @@ button {
   align-items: flex-start;
   justify-content: center;
   padding-top: 16px;
-  font-size: 56px;
+}
+
+.map-zone-sign {
+  width: 84px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
   font-weight: 800;
-  color: rgba(25, 31, 40, 0.12);
+  color: #fff;
+  border: 5px solid var(--border);
+  box-shadow: inset -5px -5px 0 0 rgba(0, 0, 0, 0.25), inset 5px 5px 0 0 rgba(255, 255, 255, 0.35);
+}
+
+.map-zone-sign.o {
+  background: var(--o-color);
+}
+
+.map-zone-sign.x {
+  background: var(--x-color);
 }
 
 .map-avatars {
@@ -325,16 +449,32 @@ button {
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  transition: left 0.5s ease, top 0.5s ease;
+  transition: left 0.5s steps(6), top 0.5s steps(6);
   transform: translate(-50%, -50%);
+}
+
+.map-avatar-sprite {
+  animation: avatar-hop 0.6s steps(2) infinite;
+}
+
+@keyframes avatar-hop {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+  100% {
+    transform: translateY(0);
+  }
 }
 
 .map-avatar-name {
   font-size: 12px;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.85);
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.9);
   padding: 1px 6px;
-  border-radius: 8px;
+  border: 2px solid var(--border);
 }
 
 .side-panel {
@@ -345,8 +485,9 @@ button {
 
 .scoreboard {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 4px solid var(--border);
+  box-shadow: inset -4px -4px 0 0 rgba(0, 0, 0, 0.15), inset 4px 4px 0 0 rgba(255, 255, 255, 0.5);
+  border-radius: 0;
   padding: 16px;
   max-height: 360px;
   overflow-y: auto;
@@ -357,7 +498,7 @@ button {
   justify-content: space-between;
   align-items: center;
   padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 2px dashed var(--border);
   font-size: 14px;
 }
 
@@ -366,8 +507,8 @@ button {
 }
 
 .banner-ad-slot {
-  border: 1px dashed var(--text-dim);
-  border-radius: 12px;
+  border: 3px dashed var(--text-dim);
+  border-radius: 0;
   padding: 12px;
   text-align: center;
   font-size: 12px;
@@ -377,20 +518,23 @@ button {
 
 .reveal-banner {
   padding: 14px;
-  border-radius: 14px;
+  border-radius: 0;
+  border: 4px solid var(--border);
   text-align: center;
   font-weight: 700;
   font-size: 16px;
-  background: rgba(49, 130, 246, 0.1);
-  color: var(--accent-dark);
+  background: #ffe9a8;
+  color: var(--text);
 }
 
 .result-correct {
   color: var(--o-color);
+  font-weight: 700;
 }
 
 .result-wrong {
   color: var(--x-color);
+  font-weight: 700;
 }
 
 .link-btn {
@@ -402,4 +546,5 @@ button {
   text-decoration: underline;
   width: auto;
   padding: 4px;
+  font-family: inherit;
 }
