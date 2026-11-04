@@ -15,7 +15,7 @@ interface Box {
 
 const O_BOX: Box = { xmin: -7, xmax: -1.5, zmin: 1, zmax: 6.5 };
 const X_BOX: Box = { xmin: 1.5, xmax: 7, zmin: 1, zmax: 6.5 };
-const NEUTRAL_BOX: Box = { xmin: -6, xmax: 6, zmin: 7.5, zmax: 9 };
+const NEUTRAL_BOX: Box = { xmin: -6, xmax: 6, zmin: 6.8, zmax: 7.6 };
 
 function layoutPositions(count: number, box: Box): [number, number][] {
   if (count === 0) return [];
@@ -105,7 +105,7 @@ export function HostScene3D({ players, status, correctAnswer }: Props) {
           target={[oPositions[i][0], 0, oPositions[i][1]]}
           reveal={oReveal}
           scale={1.5}
-          facing={Math.PI}
+          facing={0}
         />
       ))}
       {xPlayers.map((p, i) => (
@@ -116,7 +116,7 @@ export function HostScene3D({ players, status, correctAnswer }: Props) {
           target={[xPositions[i][0], 0, xPositions[i][1]]}
           reveal={xReveal}
           scale={1.5}
-          facing={Math.PI}
+          facing={0}
         />
       ))}
       {neutralPlayers.map((p, i) => (
@@ -127,6 +127,7 @@ export function HostScene3D({ players, status, correctAnswer }: Props) {
           target={[neutralPositions[i][0], 0, neutralPositions[i][1]]}
           reveal="idle"
           scale={1.5}
+          facing={0}
         />
       ))}
     </>

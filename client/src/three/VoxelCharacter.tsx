@@ -197,7 +197,7 @@ export function VoxelCharacter({
         </group>
 
         {showLabel && nickname && (
-          <Html position={[0, HEAD_Y + 0.6, 0]} center distanceFactor={8} occlude={false}>
+          <Html position={[0, HEAD_Y + 0.6, 0]} center distanceFactor={11} occlude={false}>
             <div className="voxel-name-tag">{nickname}</div>
           </Html>
         )}

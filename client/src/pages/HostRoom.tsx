@@ -102,52 +102,14 @@ export function HostRoom() {
       </div>
 
       <div className="host-main">
-        <div className="map-area-3d">
-          {webglAvailable ? (
-            <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
-              <div className="canvas-fill">
-                <HostCanvas3D
-                  players={room.players}
-                  status={room.status}
-                  correctAnswer={room.lastResult?.correctAnswer ?? null}
-                />
-              </div>
-            </Suspense>
-          ) : (
-            <div className={`map-area ${MAP_CLASS[room.map]}`}>
-              {room.status !== 'lobby' && (
-                <div className="map-zones">
-                  <div className="map-zone">
-                    <div className="map-zone-sign o">O</div>
-                  </div>
-                  <div className="map-zone">
-                    <div className="map-zone-sign x">X</div>
-                  </div>
-                </div>
-              )}
-              <div className="map-avatars">
-                {room.players.map((p) => {
-                  const pos = positionFor(p);
-                  return (
-                    <div key={p.id} className="map-avatar" style={{ left: pos.left, top: pos.top }}>
-                      <div className="map-avatar-sprite">
-                        <AvatarIcon avatarId={p.avatar} size={36} />
-                      </div>
-                      <span className="map-avatar-name">{p.nickname}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
+        <div className="map-column">
           <div className="host-hud">
             {room.status === 'question' && room.question && (
-              <div className="card stack">
+              <div className="question-strip">
                 <span className="badge">
                   문제 {room.question.index + 1} / {room.question.total}
                 </span>
-                <p className="question-text">{room.question.text}</p>
+                <p className="question-strip-text">{room.question.text}</p>
                 <div className="timer-bar">
                   <div
                     className="timer-bar-fill"
@@ -162,6 +124,46 @@ export function HostRoom() {
             {room.status === 'reveal' && room.lastResult && (
               <div className="reveal-banner">
                 정답: {room.lastResult.correctAnswer} · {room.lastResult.questionText}
+              </div>
+            )}
+          </div>
+
+          <div className="map-area-3d">
+            {webglAvailable ? (
+              <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
+                <div className="canvas-fill">
+                  <HostCanvas3D
+                    players={room.players}
+                    status={room.status}
+                    correctAnswer={room.lastResult?.correctAnswer ?? null}
+                  />
+                </div>
+              </Suspense>
+            ) : (
+              <div className={`map-area ${MAP_CLASS[room.map]}`}>
+                {room.status !== 'lobby' && (
+                  <div className="map-zones">
+                    <div className="map-zone">
+                      <div className="map-zone-sign o">O</div>
+                    </div>
+                    <div className="map-zone">
+                      <div className="map-zone-sign x">X</div>
+                    </div>
+                  </div>
+                )}
+                <div className="map-avatars">
+                  {room.players.map((p) => {
+                    const pos = positionFor(p);
+                    return (
+                      <div key={p.id} className="map-avatar" style={{ left: pos.left, top: pos.top }}>
+                        <div className="map-avatar-sprite">
+                          <AvatarIcon avatarId={p.avatar} size={36} />
+                        </div>
+                        <span className="map-avatar-name">{p.nickname}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>

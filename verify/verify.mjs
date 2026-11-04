@@ -9,6 +9,7 @@ const ROOT = path.resolve(__dirname, '..');
 const PORT = 8799;
 const REMOTE = process.env.VERIFY_WS_URL;
 const WS_URL = REMOTE || `ws://localhost:${PORT}`;
+const DEFAULT_WAIT_TIMEOUT_MS = REMOTE ? 10000 : 4000;
 
 function log(msg) {
   console.log(`[verify] ${msg}`);
@@ -32,16 +33,17 @@ class Client {
   constructor(name) {
     this.name = name;
     this.socket = new WebSocket(WS_URL);
+    this.buffer = [];
     this.waiters = [];
     this.socket.on('message', (raw) => {
       const msg = JSON.parse(raw.toString());
-      this.waiters = this.waiters.filter((w) => {
-        if (w.predicate(msg)) {
-          w.resolve(msg);
-          return false;
-        }
-        return true;
-      });
+      const waiterIndex = this.waiters.findIndex((w) => w.predicate(msg));
+      if (waiterIndex !== -1) {
+        const [waiter] = this.waiters.splice(waiterIndex, 1);
+        waiter.resolve(msg);
+      } else {
+        this.buffer.push(msg);
+      }
     });
     this.socket.on('error', (err) => {
       console.error(`[${this.name}] socket error`, err);
@@ -59,14 +61,26 @@ class Client {
     this.socket.send(JSON.stringify({ type, ...payload }));
   }
 
-  waitFor(type, predicate = () => true, timeoutMs = 4000) {
+  // Messages can arrive before waitFor is called for them (e.g. a broadcast
+  // sent in response to another client's message). Check the buffer of
+  // already-received messages first, consuming a match if present, before
+  // falling back to registering a waiter for a future message.
+  waitFor(type, predicate = () => true, timeoutMs = DEFAULT_WAIT_TIMEOUT_MS) {
+    const fullPredicate = (msg) => msg.type === type && predicate(msg);
+
+    const bufferedIndex = this.buffer.findIndex(fullPredicate);
+    if (bufferedIndex !== -1) {
+      const [msg] = this.buffer.splice(bufferedIndex, 1);
+      return Promise.resolve(msg);
+    }
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter((w) => w.resolve !== resolve);
         reject(new Error(`[${this.name}] timed out waiting for "${type}"`));
       }, timeoutMs);
       this.waiters.push({
-        predicate: (msg) => msg.type === type && predicate(msg),
+        predicate: fullPredicate,
         resolve: (msg) => {
           clearTimeout(timer);
           resolve(msg);

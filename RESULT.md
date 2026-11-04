@@ -1,51 +1,23 @@
 # RESULT
 
-## True 3D voxel upgrade (2026-11-04)
+## Four fixes (2026-11-04)
 
-Upgraded `client/` from the 2D CSS/SVG pixel-art map to a real three.js (react-three-fiber + drei) voxel scene, keeping the blocky art style. All art is original (boxes/cones/spheres built in code with flat colors) — no Minecraft/other trademarked assets, textures, or names. `server/`, `verify/`, `toss-app/`, and the WebSocket protocol were **not** touched. The avatar encoding (`s{skin}b{body}h{hat}`) and the 2D `AvatarIcon` fallback are unchanged and still used whenever WebGL is unavailable.
+`server/`, `toss-app/`, and the WebSocket protocol were not touched.
 
-### Deps (`client/package.json`)
-Added `three` (^0.187), `@react-three/fiber` (^8.18, React-18-compatible — v9 requires React 19 and this app is pinned to React 18.3.1), `@react-three/drei` (^9.122, same React-18 constraint), and `@types/three` as a dev dependency (the installed `three` version ships no bundled `.d.ts`). All resolved cleanly against the existing React 18 tree with no `--legacy-peer-deps` needed. Root `npm run build` (`npm install --include=dev && npm run build -w client`) installs and builds these from a clean checkout.
+### 1. Characters faced away from camera (`client/src/three/`)
+`HostScene3D.tsx` was passing `facing={Math.PI}` to O/X-side `VoxelCharacter`s, which pointed their visual front (the `+z` side, where the hat visor/face sits) away from the camera and toward the letter structures — their backs were toward the audience. Camera sits at larger `z` than every player, so facing the camera means facing `+z`, i.e. `facing={0}`. Changed all three groups (O, X, neutral) to `facing={0}`. `VoxelCharacter.tsx`'s existing animation logic is unchanged: while `dist > 0.03` and `reveal === 'idle'` it still smoothly rotates to face the walk direction (`Math.atan2(dx, dz)`, lerped); once stopped/arrived it smoothly lerps back to `facing` (now camera-facing) via the same `THREE.MathUtils.lerp(..., delta * 6)` — no snapping.
 
-### New files (`client/src/three/`)
-- `webgl.ts` — synchronous `isWebGLAvailable()` check (no three.js import) used by both pages to decide whether to even lazy-load the 3D chunk.
-- `shared.ts` — one shared `BoxGeometry`/`ConeGeometry`/`SphereGeometry` plus a color→`MeshStandardMaterial` cache, reused by every voxel block/limb instead of allocating per-instance.
-- `VoxelCharacter.tsx` — a character built from head/body/2 arms/2 legs boxes (+ a hat built from boxes/cones/spheres per hat type, mirroring the 2D `AvatarIcon` shapes) colored from the decoded avatar string. Lerps to a target position (walk-to-side), swings limbs + hops while moving, idle-bobs otherwise, and reacts to a `reveal` state: tips over and sinks on the wrong side, bounces in place on the correct side. Nickname shown via drei `<Html>` (DOM overlay, not in-canvas text — avoids pulling in `troika-three-text`/font loading, keeps the pixel-font look consistent, cheap for 30+ labels).
-- `Terrain.tsx` — 17×11 grass/dirt floor as a single `InstancedMesh` with per-instance vertex colors (one draw call for the whole floor).
-- `LetterStructure.tsx` — green `O` ring / red `X` cross, each a single `InstancedMesh` of ~2-voxel-thick cubes. `reveal` states: idle, correct (emissive glow + bounce), wrong (emissive flash then sinks through the floor).
-- `Clouds.tsx` — small instanced blocky cloud clusters drifting and wrapping across the sky.
-- `HostScene3D.tsx` — composes terrain/structures/clouds/lighting/camera sway and lays out players into non-overlapping grid slots inside O-zone / X-zone / neutral-zone bounding boxes (stable per-zone ordering by player id).
-- `HostCanvas3D.tsx` — the `<Canvas>` wrapper (shadows on, dpr clamped `[1, 1.75]`), default-exported for `React.lazy`.
-- `AvatarPreview3D.tsx` — small canvas with one auto-rotating `VoxelCharacter`, default-exported for `React.lazy`.
+### 2. Nickname labels too small (`client/src/three/VoxelCharacter.tsx`, `client/src/index.css`)
+`.voxel-name-tag` font-size went from fixed `12px` to `clamp(20px, 2.1vw, 32px)` (bold `800`), with a near-opaque dark background (`rgba(10,14,24,0.88)`), white text, and a white border for strong contrast against grass/stone/sky backgrounds. Raised the `<Html distanceFactor>` from `8` to `11` so the drei billboard scale roughly matches 1:1 at the typical host-camera distance to players (~11–16 world units) instead of shrinking labels to ~half size. Kept `white-space: nowrap` and compact padding to limit overlap in dense grids.
 
-### Host big screen (`client/src/pages/HostRoom.tsx`, `index.css`)
-- WebGL-available: lazy-loads `HostCanvas3D` inside a new `.map-area-3d` container; the question/timer card and reveal banner now render as an absolutely-positioned `.host-hud` layer **on top of** the canvas (matches the "2D overlay on top of the 3D canvas" ask). Scoreboard/side panel unchanged.
-- WebGL-unavailable: falls back to the original 2D CSS map + `AvatarIcon` sprites inside the same container.
-- One directional shadow-casting light (1024×1024 shadow map, tuned ortho frustum) + ambient fill; camera is a fixed isometric-ish rig that gently sways (sin-wave position/look-at drift), not user-controlled.
+### 3. HUD covered the O/X structures (`client/src/pages/HostRoom.tsx`, `client/src/three/HostScene3D.tsx`, `client/src/index.css`)
+- The question/timer card was `position: absolute` inside `.map-area-3d`, floating over the top ~25–30% of the canvas. Verified by frustum math (camera `(0,10.5,15)`, `fov 48`, `lookAt(0,1.8,1)`): the top row of the `O`/`X` letter structures (world `y≈4.5`, `z≈-0.7`) projects to NDC `y≈0.43` — squarely inside the band the old ~150px-tall absolute HUD covered (NDC `y` from `0.34` to `1.0` for a 480px-tall canvas).
+- Fix: restructured the JSX so `.host-hud` is a sibling **above** `.map-area-3d` inside a new flex column (`.map-column`), not an overlay — it now occupies its own document-flow space, so it can never cover the canvas regardless of content height. Condensed the question card into a single-row `.question-strip` (badge + 2-line-clamped question text + fixed-width timer bar) with a fixed `min-height: 76px` on `.host-hud` so canvas size doesn't jump between lobby/question/reveal states.
+- Also found (same frustum math) that the closest row of the `NEUTRAL_BOX` waiting area (`z` up to `9`) clipped below the bottom edge of the frustum (NDC `y≈-1.21`, outside `[-1,1]`) — players' feet were cut off. The max safe `z` for full visibility under this camera is ≈7.88. Shrank `NEUTRAL_BOX` from `{zmin:7.5, zmax:9}` to `{zmin:6.8, zmax:7.6}`, which re-checks to NDC `y≈-0.78` (safely inside frame) without touching the camera or O/X player boxes (already safe at `zmax 6.5` → NDC `y≈-0.78`).
 
-### Player phone (`client/src/pages/PlayerRoom.tsx`, `index.css`)
-- Avatar builder's preview is now a small lazy-loaded rotating 3D canvas (`.avatar-preview-3d`, low dpr) showing the live skin/shirt/hat combo; falls back to the existing 2D `AvatarIcon` if `isWebGLAvailable()` is false, and while the chunk is loading (`Suspense` fallback). Hat-picker thumbnails stay 2D icons (cheap, no need for 30 live canvases). Big O/X answer buttons untouched.
-
-### Bug found & fixed during manual verification
-Setting `material.vertexColors = true` on the terrain's `InstancedMesh` material made the shader also expect a per-vertex `color` *geometry* attribute (`USE_COLOR`), which the shared `BoxGeometry` doesn't have — defaulting to `(0,0,0)` and zeroing out the per-instance color, rendering the entire floor pure black. Per-instance color (`USE_INSTANCING_COLOR`) is applied automatically whenever `mesh.instanceColor` exists, independent of `material.vertexColors` — removing that flag fixed it. Confirmed via headless-Chrome screenshots before/after.
+### 4. `verify/verify.mjs` waitFor race (timing flake)
+`Client.waitFor` only registered a predicate/resolve waiter *after* being called; any message that arrived between a `send()` and the matching `waitFor()` call (e.g. a `roomState` broadcast triggered by another client's `joinRoom`) was dropped on the floor, occasionally producing `timed out waiting for "roomState"`. Fixed by giving each `Client` a `buffer` array: every incoming message is first matched against pending waiters (consumed if found) and otherwise pushed to the buffer. `waitFor` now checks the buffer first (splicing out and resolving immediately with the first matching buffered message) before falling back to registering a timed waiter for a future message. `VERIFY_WS_URL` support is unchanged; added `DEFAULT_WAIT_TIMEOUT_MS` (4000ms local / 10000ms when `VERIFY_WS_URL` is set) as the default `waitFor` timeout to give extra headroom over a remote connection.
 
 ### Verification performed
-- `npm run build` (root) — passes: `tsc` clean, `vite build` succeeds.
-- `npm run verify` (root) — passes: full host + 3-player OX quiz simulation against the untouched server/protocol.
-- Manual visual QA: ran the real server + built client under headless Chrome (software WebGL via SwiftShader) and screenshotted — lobby (idle O/X structures, drifting clouds, grass/dirt floor, 16 players with varied hats/colors and shadows), question/reveal state (X was wrong: red structure visibly flashes and tumbles/sinks, players who chose X are tipped over on the ground; O was correct: green ring intact/glowing, its players upright), and the phone avatar picker's rotating 3D preview with hat/color changes reflected live.
-
-### Bundle sizes (`npm run build -w client`, production, gzip in parens)
-| File | Size |
-|---|---|
-| `index-*.js` (app shell: React, router, pages, 2D fallback) | 182.04 kB (59.04 kB) |
-| `VoxelCharacter-*.js` (three.js + fiber + drei + all scene code, shared chunk) | 901.20 kB (241.48 kB) |
-| `HostCanvas3D-*.js` (host canvas entry point) | 5.33 kB (2.20 kB) |
-| `AvatarPreview3D-*.js` (avatar preview entry point) | 0.49 kB (0.34 kB) |
-| `index-*.css` | 8.73 kB (2.40 kB) |
-
-The three.js/r3f/drei chunk (~241 kB gzip) only downloads when a device actually has WebGL and reaches a host room or the avatar picker — it is never in the initial app-shell request, so cold load / the church search & room-list flows stay light. Vite's default 500 kB chunk-size warning fires on this shared chunk, which is expected for a three.js-containing bundle and does not affect correctness.
-
-### Caveats
-- 60fps with 30+ players was validated functionally (instancing for terrain/structures/clouds, shared geometries/materials, no per-frame allocations in hot loops, dpr clamp) but not measured with a real GPU + many concurrent WS clients in this sandbox (only SwiftShader software rendering was available here).
-- Camera is fixed/swaying, not orbit-controllable, by design (big-screen presentation, not an interactive 3D viewer).
-- `@react-three/fiber`/`drei` are pinned to the v8/v9 lines (not latest v9/v10) to stay compatible with this project's React 18; upgrading React to 19 later would allow moving to the newer fiber/drei majors.
+- `npm run build` — passes (`tsc` clean, `vite build` succeeds).
+- `npm run verify` — passes, run 6 times consecutively with no flakes (previously intermittent on the `roomState`-after-joins wait).
