@@ -1,0 +1,24 @@
+{
+  "name": "church-game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm install --include=dev && npm run build -w client",
+    "verify": "node verify/verify.mjs",
+    "start": "node server/src/index.js",
+    "verify:remote": "node verify/verify.mjs"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

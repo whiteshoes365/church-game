@@ -1,0 +1,104 @@
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { gameSocket } from '../ws';
+import type { Capacity, MapTheme, RoomSummary } from '../protocol';
+
+const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
+  { value: 'sanctuary', label: '예배당' },
+  { value: 'playground', label: '운동장' },
+  { value: 'forest', label: '숲' },
+];
+
+const CAPACITY_OPTIONS: { value: Capacity; label: string }[] = [
+  { value: 4, label: '4명' },
+  { value: 8, label: '8명' },
+  { value: 'unlimited', label: '제한 없음' },
+];
+
+export function HostRooms() {
+  const { churchId } = useParams<{ churchId: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const churchName = (location.state as { churchName?: string } | null)?.churchName ?? '우리 교회';
+
+  const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [title, setTitle] = useState('OX 성경 퀴즈');
+  const [map, setMap] = useState<MapTheme>('sanctuary');
+  const [capacity, setCapacity] = useState<Capacity>(8);
+
+  useEffect(() => {
+    gameSocket.connect();
+    const offList = gameSocket.on('roomList', (msg) => {
+      if (msg.churchId === churchId) setRooms(msg.rooms);
+    });
+    const offCreated = gameSocket.on('roomCreated', (msg) => {
+      navigate(`/host/room/${msg.room.id}`);
+    });
+    gameSocket.send('listRooms', { churchId });
+    const interval = setInterval(() => gameSocket.send('listRooms', { churchId }), 3000);
+    return () => {
+      offList();
+      offCreated();
+      clearInterval(interval);
+    };
+  }, [churchId, navigate]);
+
+  function createRoom() {
+    if (!title.trim()) return;
+    gameSocket.send('createRoom', { churchId, title: title.trim(), map, capacity });
+  }
+
+  return (
+    <div className="screen">
+      <div className="screen-narrow stack">
+        <h1 className="title">{churchName}</h1>
+        <p className="subtitle">새 방을 만들거나 기존 방을 열어주세요</p>
+
+        <div className="card stack">
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="방 제목" />
+          <div className="row">
+            {MAP_OPTIONS.map((m) => (
+              <button
+                key={m.value}
+                className={`btn btn-sm ${map === m.value ? 'btn-primary' : ''}`}
+                onClick={() => setMap(m.value)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <div className="row">
+            {CAPACITY_OPTIONS.map((c) => (
+              <button
+                key={String(c.value)}
+                className={`btn btn-sm ${capacity === c.value ? 'btn-primary' : ''}`}
+                onClick={() => setCapacity(c.value)}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-primary" onClick={createRoom} disabled={!title.trim()}>
+            방 만들기
+          </button>
+        </div>
+
+        <div className="room-list">
+          {rooms.map((room) => (
+            <div key={room.id} className="room-item" onClick={() => navigate(`/host/room/${room.id}`)}>
+              <div>
+                <div className="room-item-title">{room.title}</div>
+                <div className="room-item-meta">참여 {room.playerCount}명</div>
+              </div>
+              <span className="badge">{room.status === 'lobby' ? '대기중' : '진행중'}</span>
+            </div>
+          ))}
+        </div>
+
+        <button className="link-btn" onClick={() => navigate('/host')}>
+          다른 교회 찾기
+        </button>
+      </div>
+    </div>
+  );
+}
