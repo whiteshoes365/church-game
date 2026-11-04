@@ -18,6 +18,9 @@ const PORT = 8799;
 const REMOTE = process.env.VERIFY_WS_URL;
 const WS_URL = REMOTE || `ws://localhost:${PORT}`;
 const DEFAULT_WAIT_TIMEOUT_MS = REMOTE ? 10000 : 4000;
+// Generous timeout for "all players simultaneously in zone" checks, since
+// auto-walk arrival + separation-physics settling can take a few seconds.
+const ZONE_ARRIVAL_TIMEOUT_MS = REMOTE ? 20000 : 10000;
 
 function log(msg) {
   console.log(`[verify] ${msg}`);
@@ -140,11 +143,28 @@ function inZone(pos, zoneBox) {
   return pos.x >= zoneBox.xmin && pos.x <= zoneBox.xmax && pos.z >= zoneBox.zmin && pos.z <= zoneBox.zmax;
 }
 
-async function waitUntilInZone(host, roomId, deviceId, zoneBox, maxWaitMs) {
+// Waits until every given player is simultaneously standing inside their target
+// zone within a *single* positions broadcast. Checking each player independently
+// (one-at-a-time) is racy: by the time the last player's arrival is confirmed, an
+// earlier arrival can have been bumped out of their zone by avatar separation
+// physics as other players converge, so reveal must only fire once one broadcast
+// shows everyone in place at once.
+async function waitUntilAllInZones(host, roomId, targets, maxWaitMs) {
   const deadline = Date.now() + maxWaitMs;
+  host.buffer = host.buffer.filter((m) => !(m.type === 'positions' && m.roomId === roomId));
   while (Date.now() < deadline) {
-    const pos = await freshPosition(host, roomId, deviceId);
-    if (inZone(pos, zoneBox)) return true;
+    const remaining = Math.max(250, deadline - Date.now());
+    let msg;
+    try {
+      msg = await host.waitFor('positions', (m) => m.roomId === roomId, remaining);
+    } catch {
+      return false;
+    }
+    const allIn = targets.every(({ deviceId, zoneBox }) => {
+      const p = msg.players.find((pl) => pl.id === deviceId);
+      return p && inZone(p, zoneBox);
+    });
+    if (allIn) return true;
   }
   return false;
 }
@@ -271,11 +291,16 @@ async function main() {
       await host.waitFor('roomState', (msg) => msg.room.players.filter((pl) => pl.side !== null).length === 3);
 
       // OX 버튼(answer 메시지)은 이제 해당 구역으로 자동 이동시키기만 함 -> 정답 판정은 실제
-      // 서 있는 구역으로 이뤄지므로, 공개하기 전에 각자 자기 구역에 도착할 때까지 기다림
-      const arrived = await Promise.all(
-        players.map((p, i) => waitUntilInZone(host, roomId, p.deviceId, ZONES[choices[i]], 5000)),
+      // 서 있는 구역으로 이뤄지므로, 공개하기 전에 모든 플레이어가 "동시에" 각자의 구역에
+      // 도착할 때까지 기다림 (한 명씩 따로 확인하면, 마지막 사람이 도착할 때쯔음 분리(separation)
+      // 물리에 밀려 먼저 도착한 사람이 구역 밖으로 밀려나는 경우가 있어 점수가 불안정해짐)
+      const allArrived = await waitUntilAllInZones(
+        host,
+        roomId,
+        players.map((p, i) => ({ deviceId: p.deviceId, zoneBox: ZONES[choices[i]] })),
+        ZONE_ARRIVAL_TIMEOUT_MS,
       );
-      assert(arrived.every(Boolean), '모든 플레이어가 OX 버튼 자동 이동으로 선택한 구역에 도착해야 함');
+      assert(allArrived, '모든 플레이어가 OX 버튼 자동 이동으로 선택한 구역에 동시에 도착해야 함');
 
       // 호스트가 바로 정답 공개
       host.send('reveal', { roomId });
@@ -505,7 +530,7 @@ async function main() {
       log(`quiz questions for level '${level}' all drawn from that level's set (3/3 rounds)`);
     }
 
-    // 7. 카테고리 혼합(성경/상식/넌센스), 최근 출제 회피, 주간 문항 검증 스크립트
+    // 7. 카테고리 혼합(성경/넌센스), 최근 출제 회피, 주간 문항 검증 스크립트
     log('--- category mixing & weekly question-bank tests ---');
     const host4 = new Client('host4');
     await host4.ready();
@@ -535,15 +560,23 @@ async function main() {
       return seen;
     }
 
-    // 7a. 기본(30문제) 게임: 카테고리가 모두 채워져 있고, 비율이 대략 70/20/10(정확히
-    // 21/6/3)에 맞고, 모두 선택한 level 소속이며, 한 게임 안에서 중복이 없어야 함.
+    // 7a. 기본(30문제) 게임: 카테고리가 모두 채워져 있고, 뱅크에 넌센스가 있으면 비율이
+    // 대략 90/10에 맞고 없으면 전부 성경이어야 하며, 뱅크가 요청한 수보다 작으면 에러 없이
+    // 뱅크 전체를 그대로(중복 없이) 다 써야 함. 모두 선택한 level 소속이어야 함.
     host4.send('createRoom', { churchId: church4Id, title: '카테고리방', map: 'sanctuary', capacity: 'unlimited', level: 'elementary' });
     const catRoom = await host4.waitFor('roomCreated');
     const catRoomId = catRoom.room.id;
     assert(catRoom.room.level === 'elementary', '카테고리 검증방의 level이 elementary여야 함');
 
+    const elemPoolSize = QUESTIONS_BY_LEVEL.elementary.length;
+    const elemNonsenseCount = QUESTIONS_BY_LEVEL.elementary.filter((q) => q.category === 'nonsense').length;
+    const expectedGame1Length = Math.min(DEFAULT_QUESTION_COUNT, elemPoolSize);
+
     const game1 = await playFullGame(host4, catRoomId); // questionCount 생략 -> 기본값
-    assert(game1.length === DEFAULT_QUESTION_COUNT, `기본 문제 수는 ${DEFAULT_QUESTION_COUNT}개여야 하는데 ${game1.length}개`);
+    assert(
+      game1.length === expectedGame1Length,
+      `뱅크(${elemPoolSize}개)가 기본 문제 수(${DEFAULT_QUESTION_COUNT})보다 작으면 뱅크 전체(${expectedGame1Length}개)를 써야 하는데 ${game1.length}개`,
+    );
     assert(
       game1.every((q) => q.category && CATEGORIES.includes(q.category)),
       '모든 문제의 snapshot에 유효한 category가 있어야 함',
@@ -553,28 +586,41 @@ async function main() {
     const game1Texts = game1.map((q) => q.text);
     assert(new Set(game1Texts).size === game1Texts.length, '한 게임 안에서 같은 문제가 중복 출제되면 안 됨');
 
-    const game1Counts = { bible: 0, general: 0, nonsense: 0 };
+    const game1Counts = { bible: 0, nonsense: 0 };
     for (const q of game1) game1Counts[q.category] += 1;
-    log(`30-question mix: ${JSON.stringify(game1Counts)}`);
-    assert(game1Counts.bible === 21, `30문제 중 성경(bible)은 21개여야 하는데 ${game1Counts.bible}개`);
-    assert(game1Counts.general === 6, `30문제 중 상식(general)은 6개여야 하는데 ${game1Counts.general}개`);
-    assert(game1Counts.nonsense === 3, `30문제 중 넌센스(nonsense)는 3개여야 하는데 ${game1Counts.nonsense}개`);
-    log('category presence + 70/20/10 mixing ratio + level sourcing + no-repeats-in-game all ok');
+    log(`question mix (bank size ${elemPoolSize}): ${JSON.stringify(game1Counts)}`);
+    if (elemNonsenseCount === 0) {
+      assert(game1Counts.nonsense === 0, `뱅크에 넌센스 문항이 없으면 넌센스는 0개여야 하는데 ${game1Counts.nonsense}개`);
+      assert(game1Counts.bible === game1.length, `뱅크에 넌센스 문항이 없으면 전부 성경이어야 하는데 성경 ${game1Counts.bible}/${game1.length}개`);
+    } else {
+      const expectedNonsense = Math.round(game1.length * 0.1);
+      assert(
+        Math.abs(game1Counts.nonsense - expectedNonsense) <= 2,
+        `넌센스 비율은 대략 10%(≈${expectedNonsense}개)여야 하는데 ${game1Counts.nonsense}개`,
+      );
+    }
+    log('category presence + ~90/10 mixing ratio (or all-bible fallback when no nonsense) + level sourcing + no-repeats-in-game all ok');
 
-    // 7b. 같은 교회에서 연속으로 게임을 돌리면, 문제 뱅크가 허락하는 한(이번 경우 성경
-    // 문제 풀 30개 중 7+7=14개만 쓰므로 충분히 허락됨) 최근에 나온 문제를 피해서 출제해야 함.
+    // 7b. 같은 교회에서 연속으로 게임을 돌리면, 문제 뱅크가 허락하는 한 최근에 나온 문제를
+    // 피해서 출제해야 함. 각 게임의 문제 수는 뱅크 크기에 맞춰 동적으로 계산해서(두 게임을
+    // 합쳐도 뱅크를 다 못 쓰고 여유가 남도록), 큐레이션으로 뱅크가 작아져도 테스트가 깨지지
+    // 않게 해요.
     host4.send('createRoom', { churchId: church4Id, title: '최근출제회피방', map: 'sanctuary', capacity: 'unlimited', level: 'middle' });
     const recentRoom = await host4.waitFor('roomCreated');
     const recentRoomId = recentRoom.room.id;
 
-    const recentGame1 = await playFullGame(host4, recentRoomId, 10);
-    const recentGame2 = await playFullGame(host4, recentRoomId, 10);
+    const middlePoolSize = QUESTIONS_BY_LEVEL.middle.length;
+    const recentGameSize = Math.max(1, Math.min(10, Math.floor(middlePoolSize / 2) - 1));
+    log(`recent-avoidance using ${recentGameSize}-question games against a ${middlePoolSize}-question middle bank`);
+
+    const recentGame1 = await playFullGame(host4, recentRoomId, recentGameSize);
+    const recentGame2 = await playFullGame(host4, recentRoomId, recentGameSize);
     const bibleTexts1 = new Set(recentGame1.filter((q) => q.category === 'bible').map((q) => q.text));
     const bibleTexts2 = new Set(recentGame2.filter((q) => q.category === 'bible').map((q) => q.text));
     const overlap = [...bibleTexts1].filter((t) => bibleTexts2.has(t));
     assert(
       overlap.length === 0,
-      `문제 뱅크가 충분한 상황(성경 30개 중 7+7=14개만 사용)에서는 같은 교회의 연속된 두 게임 사이에 겹치는 성경 문제가 없어야 하는데 겹침: ${JSON.stringify(overlap)}`,
+      `문제 뱅크가 충분한 상황(성경 ${middlePoolSize}개 중 ${recentGameSize}+${recentGameSize}개만 사용)에서는 같은 교회의 연속된 두 게임 사이에 겹치는 성경 문제가 없어야 하는데 겹침: ${JSON.stringify(overlap)}`,
     );
     log('recent-avoidance across two consecutive games in the same church verified (0 bible overlap)');
 
@@ -604,6 +650,31 @@ async function main() {
     fs.unlinkSync(badWeekPath);
     assert(badResult.status !== 0, 'add-week.mjs는 잘못된 level/ref 누락이 있는 파일을 거부(종료 코드 0이 아님)해야 함');
     log('add-week.mjs rejects an invalid file (non-zero exit) ok');
+
+    // 'general' 카테고리는 더 이상 허용되지 않으므로, 이걸 쓰는 파일은 거부되어야 함
+    const generalWeekPath = path.join(os.tmpdir(), `church-game-general-week-${Date.now()}.json`);
+    fs.writeFileSync(
+      generalWeekPath,
+      JSON.stringify([
+        {
+          id: 'verify-general-001',
+          level: 'elementary',
+          category: 'general',
+          text: '검증용으로 일부러 general 카테고리를 넣은 문항이에요.',
+          answer: 'O',
+          explanation: 'general 카테고리는 더 이상 허용되지 않아요.',
+          week: '2026-46',
+        },
+      ]),
+    );
+    const generalResult = spawnSync(process.execPath, [addWeekScript, generalWeekPath, '--dry-run'], { cwd: ROOT, encoding: 'utf-8' });
+    fs.unlinkSync(generalWeekPath);
+    assert(generalResult.status !== 0, "add-week.mjs는 category: 'general'을 거부(종료 코드 0이 아님)해야 함");
+    assert(
+      generalResult.stderr.includes('category') && generalResult.stderr.includes('general'),
+      `add-week.mjs의 오류 메시지가 category 'general'이 잘못되었음을 알려줘야 하는데: ${generalResult.stderr}`,
+    );
+    log("add-week.mjs rejects category 'general' (non-zero exit) ok");
 
     const exampleWeekFileBefore = fs.existsSync(path.join(ROOT, 'server/data/questions/2026-46.json'));
     const exampleResult = spawnSync(process.execPath, [addWeekScript, exampleWeekPath, '--dry-run'], { cwd: ROOT, encoding: 'utf-8' });

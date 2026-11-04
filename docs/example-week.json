@@ -20,12 +20,13 @@
     "week": "2026-46"
   },
   {
-    "id": "example-elementary-general-001",
+    "id": "example-elementary-bible-003",
     "level": "elementary",
-    "category": "general",
-    "text": "사자는 '동물의 왕'이라고 불려요.",
+    "category": "bible",
+    "text": "노아는 하나님의 말씀을 듣고 큰 배(방주)를 만들었어요.",
     "answer": "O",
-    "explanation": "사자는 흔히 '동물의 왕'이라고 불려요.",
+    "explanation": "창세기 6:14-22. 노아는 하나님의 명령대로 방주를 만들었어요.",
+    "ref": "창세기 6:14-22",
     "week": "2026-46"
   },
   {
@@ -58,12 +59,13 @@
     "week": "2026-46"
   },
   {
-    "id": "example-middle-general-001",
+    "id": "example-middle-bible-003",
     "level": "middle",
-    "category": "general",
-    "text": "대한민국의 법정 공휴일인 설날과 추석은 음력 날짜를 기준으로 정해요.",
+    "category": "bible",
+    "text": "요셉은 이집트에서 총리(국무총리급 관직)에까지 오르게 되었어요.",
     "answer": "O",
-    "explanation": "설날(음력 1월 1일)과 추석(음력 8월 15일)은 음력 기준으로 날짜가 정해져요.",
+    "explanation": "창세기 41:39-41. 바로는 요셉을 이집트 전체를 다스리는 자리에 세웠어요.",
+    "ref": "창세기 41:39-41",
     "week": "2026-46"
   },
   {
@@ -96,12 +98,13 @@
     "week": "2026-46"
   },
   {
-    "id": "example-high-general-001",
+    "id": "example-high-bible-003",
     "level": "high",
-    "category": "general",
-    "text": "세계에서 가장 높은 산은 에베레스트산이에요.",
+    "category": "bible",
+    "text": "에스라서와 느헤미야서는 바벨론 포로 생활 이후 유다 백성의 귀환과 재건을 다뤄요.",
     "answer": "O",
-    "explanation": "에베레스트산(높이 약 8,849m)은 세계에서 가장 높은 산이에요.",
+    "explanation": "에스라 1장, 느헤미야 1-2장. 두 책 모두 포로 귀환 이후의 성전과 성벽 재건을 다뤄요.",
+    "ref": "에스라 1:1-4, 느헤미야 2:1-8",
     "week": "2026-46"
   },
   {
@@ -134,12 +137,13 @@
     "week": "2026-46"
   },
   {
-    "id": "example-youth-general-001",
+    "id": "example-youth-bible-003",
     "level": "youth",
-    "category": "general",
-    "text": "유엔(UN) 본부는 뉴욕에 있어요.",
+    "category": "bible",
+    "text": "갈라디아서는 율법의 행위가 아니라 믿음으로 의롭다 하심을 받는다는 주제를 다뤄요.",
     "answer": "O",
-    "explanation": "국제연합(UN) 본부는 미국 뉴욕에 있어요.",
+    "explanation": "갈라디아서 2:16. 사람이 의롭게 되는 것은 율법의 행위가 아니라 믿음을 통해서라고 가르쳐요.",
+    "ref": "갈라디아서 2:16",
     "week": "2026-46"
   },
   {

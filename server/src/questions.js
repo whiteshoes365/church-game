@@ -4,7 +4,7 @@
 // 각 문항: { id, level, category, text, answer, explanation, ref?, week }
 //   - id: 전체 문항 뱅크에서 고유한 안정적인 문자열 id
 //   - level: 'elementary' | 'middle' | 'high' | 'youth'
-//   - category: 'bible' | 'general' | 'nonsense'
+//   - category: 'bible' | 'nonsense'
 //   - answer: 'O' | 'X'
 //   - ref: 성경 출처(장:절) — category가 'bible'이면 필수
 //   - week: 해당 문항이 추가된 주차 (YYYY-WW)
@@ -28,18 +28,17 @@ export const LEVEL_LABELS = {
 
 export const DEFAULT_LEVEL = 'elementary';
 
-export const CATEGORIES = ['bible', 'general', 'nonsense'];
+export const CATEGORIES = ['bible', 'nonsense'];
 
 export const CATEGORY_LABELS = {
   bible: '성경',
-  general: '상식',
   nonsense: '넌센스',
 };
 
 // 호스트가 방을 만들 때 고를 수 있는 문제 수와, 카테고리를 섞는 기본 비율.
-// 30문제 기준 대략 성경 21 / 상식 6 / 넌센스 3에 맞춰져 있어요.
+// 30문제 기준 대략 성경 27 / 넌센스 3에 맞춰져 있어요.
 export const DEFAULT_QUESTION_COUNT = 30;
-export const CATEGORY_RATIOS = { bible: 0.7, general: 0.2, nonsense: 0.1 };
+export const CATEGORY_RATIOS = { bible: 0.9, nonsense: 0.1 };
 
 function loadAllQuestions() {
   const files = fs.existsSync(DATA_DIR)
@@ -53,6 +52,9 @@ function loadAllQuestions() {
     for (const q of list) {
       if (seenIds.has(q.id)) {
         throw new Error(`Duplicate question id "${q.id}" found while loading ${file}`);
+      }
+      if (!CATEGORIES.includes(q.category)) {
+        throw new Error(`Invalid category "${q.category}" for question "${q.id}" in ${file} (allowed: ${CATEGORIES.join(', ')})`);
       }
       seenIds.add(q.id);
       all.push(q);

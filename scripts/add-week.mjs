@@ -132,14 +132,14 @@ if (errors.length === 0) {
   }
 }
 
-// 권장 개수(30문제 기준 성경21/상식6/넌센스3) 및 O/X 균형 - 경고만, 실패시키지 않음
+// 권장 개수(30문제 기준 성경27/넌센스3) 및 O/X 균형 - 경고만, 실패시키지 않음
 if (errors.length === 0) {
   for (const level of LEVELS) {
     const forLevel = data.filter((q) => q.level === level);
     if (forLevel.length === 0) continue;
     const total = forLevel.length;
 
-    const counts = { bible: 0, general: 0, nonsense: 0 };
+    const counts = { bible: 0, nonsense: 0 };
     let oCount = 0;
     let xCount = 0;
     for (const q of forLevel) {
@@ -149,8 +149,7 @@ if (errors.length === 0) {
     }
 
     const recommended = {
-      bible: Math.round(total * 0.7),
-      general: Math.round(total * 0.2),
+      bible: Math.round(total * 0.9),
       nonsense: Math.round(total * 0.1),
     };
     for (const category of CATEGORIES) {

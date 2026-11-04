@@ -1,134 +1,87 @@
 # RESULT
 
-## Question bank as JSON data + category mixing (2026-11-04)
+## Remove 'general' category; 90/10 bible/nonsense mixing; drop joke framing (2026-11-05)
 
-Moved the OX quiz question bank out of `server/src/questions.js` and into versioned JSON
-data files under `server/data/questions/<YYYY-WW>.json` (ISO week), loaded at server
-startup — no DB. Added two new content categories (general knowledge, nonsense/pun) on
-top of the existing bible questions, wired end-to-end so each game mixes categories
-~70/20/10, and added a validation script for adding new weekly question files.
-`toss-app/` was not touched. `VERIFY_WS_URL` support is preserved.
+The question bank was re-curated by the owner down to 86 bible-only questions
+(elementary 18, middle 25, high 22, youth 21; 0 general, 0 nonsense). This change
+removes the `general`(상식) category from the whole stack, switches mixing to
+~90% bible / 10% nonsense, and hardens `verify.mjs` for the smaller bank and a
+flaky score assertion. `toss-app/` and `server/data/questions/*.json` content were
+not touched.
 
-## Data (`server/data/questions/2026-45.json`)
+## Server (`server/src/questions.js`)
 
-- Migrated the original 120 bible questions from `server/src/questions.js` into this
-  file (`category: 'bible'`), adding a `ref` field to every one (parsed from the
-  existing explanation text, or filled in by hand where the explanation didn't lead
-  with a citation) and a `week: '2026-45'` field.
-- Fixed the elementary manger question per request: text is now `'아기 예수님은
-  베들레헴에서 태어나 구유에 누이셨어요.'` (answer `O`, ref `누가복음 2:7`).
-- Added a starter set of **general** (상식) and **nonsense** (넌센스) questions for the
-  same week, ~9 general + 5 nonsense per level (36 + 20 = 56 new questions), kid-safe,
-  accurate, and non-controversial. Nonsense questions follow a "the answer to this pun
-  riddle is ___" O/X format with the real wordplay explained in `explanation`.
-- Every id and `text` is unique across the whole 176-question bank (checked at load
-  time and by `scripts/add-week.mjs`).
-
-**Totals per level × category (O/X split):**
-
-| Level | 성경(bible) | 상식(general) | 넌센스(nonsense) | Level total |
-|---|---|---|---|---|
-| elementary (초등) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
-| middle (중등) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
-| high (고등) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
-| youth (청년) | 30 (O15/X15) | 9 (O5/X4) | 5 (O3/X2) | 44 |
-| **Total** | **120** | **36** | **20** | **176** |
-
-**2 sample nonsense questions (with answers):**
-
-- "세상에서 가장 뜨거운 과일은 '천도복숭아'예요." → **O** — 복숭아 이름 '천도'가 숫자
-  1000(천)과 온도를 나타내는 '도'처럼 들려서 생긴 말장난이에요.
-- "세상에서 가장 빠른 개는 '진돗개'예요." → **X** — 정답은 '번개'예요. 번개의 '개' 글자
-  때문에 생긴 말장난이거든요.
-
-## `server/src/questions.js` (now a loader, not data)
-
-Reads every `*.json` file under `server/data/questions/`, errors on any duplicate `id`
-across files, and exposes the same surface other modules already depended on —
-`LEVELS`, `LEVEL_LABELS`, `DEFAULT_LEVEL`, `QUESTIONS_BY_LEVEL`, `QUESTIONS`,
-`normalizeLevel`, `questionsForLevel` — plus new exports: `CATEGORIES`,
-`CATEGORY_LABELS`, `DEFAULT_QUESTION_COUNT` (30), `CATEGORY_RATIOS` (0.7/0.2/0.1),
-`ALL_QUESTIONS`, `QUESTIONS_BY_LEVEL_CATEGORY`, `categoryCounts(total)`, and
-`selectQuizQuestions({ level, count, excludeIds })`.
-
-`selectQuizQuestions` fills each category's desired share first, falls back to other
-categories (then the full level pool) if a category runs short, prefers ids not in
-`excludeIds`, and shuffles the result.
-
-## Server (`state.js` / `index.js`)
-
-- `createRoom` accepts optional `questionCount` (stored as `room.questionCount`,
-  defaulting to 30); `startQuiz(room, questionCount)` uses the explicit value if given,
-  else the room's default, and calls `selectQuizQuestions` for `room.level`.
-- Per-church in-memory history (`recentGamesByChurch`, last 5 games) is excluded first
-  when selecting a new game's questions, so a church sees fresh questions across
-  consecutive games wherever the bank is large enough to allow it; resets on restart
-  (no DB), as specified.
-- `room.questions` now holds the full selected question objects (replacing the old
-  index-based `room.questionOrder`); `currentQuestion`, `advanceQuestion`,
-  `revealAnswer`, and `serializeRoom` were updated accordingly. The question snapshot
-  and `lastResult` both now include `category`.
+- `CATEGORIES` is now `['bible', 'nonsense']`; `CATEGORY_LABELS` drops `general`.
+- `CATEGORY_RATIOS` is now `{ bible: 0.9, nonsense: 0.1 }` (was 0.7/0.2/0.1).
+- `loadAllQuestions()` now throws if any question's `category` isn't in
+  `CATEGORIES` — a stray `general` question in a data file fails server startup
+  instead of silently loading.
+- `selectQuizQuestions` logic (fallback to the other category, then the full
+  level pool, when one runs short; capped to pool size with no error when the
+  bank is smaller than the requested count; no repeats) was already written
+  generically against `CATEGORIES` and needed no changes.
 
 ## Client
 
-- `protocol.ts`: new `Category` type; `QuestionSnapshot`/`LastResult` gain `category`.
-- New `client/src/categories.ts`: `CATEGORY_LABELS`/`CATEGORY_CLASS` (성경/상식/넌센스).
-- `HostRoom.tsx` / `PlayerRoom.tsx`: small category badge shown next to the question
-  (host strip, player question card) and on the reveal banner.
-- `HostRooms.tsx`: room-create screen gets a 10/20/30 question-count picker, sent as
-  `questionCount` in `createRoom`.
-- `index.css`: `--category-*` colors and `.badge-category`/`.category-*` classes,
-  matching the existing level-badge styling.
+- `protocol.ts`: `Category` type is now `'bible' | 'nonsense'`.
+- `categories.ts`: `CATEGORY_LABELS`/`CATEGORY_CLASS` drop the `general` entry.
+- `index.css`: removed `--category-general` and `.category-general` rule. The
+  `general` category tag was never a distinct "joke" label — `넌센스` already
+  reads as a plain category name, so no UI copy changes were needed there.
+- No other client code references categories by name (badges key off the maps
+  above generically), so nothing else to change.
 
-## `scripts/add-week.mjs` (+ `npm run add-week`, `docs/example-week.json`)
+## `scripts/add-week.mjs` / `docs/WEEKLY.md` / `docs/example-week.json`
 
-Validates a weekly question JSON file — per-field schema, `level`/`category`
-membership, `O`/`X` answer, `ref` required for `bible`, `week` format and consistency,
-duplicate `id`/`text` within the file and against the whole existing bank — then
-writes (merging if the week file already exists) into
-`server/data/questions/<week>.json`. Recommended per-level counts (30: ~21 bible, 6
-general, 3 nonsense) and O/X balance are warnings only. Any validation error exits
-non-zero and writes nothing. `--dry-run` runs all validation/warnings but never writes.
-`docs/example-week.json` is a small valid example (week `2026-46`, all 4 levels, all 3
-categories) used by both the docs and `verify.mjs`.
+- `add-week.mjs`: recommended-count warning logic now checks bible(90%)/
+  nonsense(10%) instead of bible/general/nonsense. `category` validation
+  already rejects anything outside `CATEGORIES` (imported from
+  `questions.js`), so a `general` question now fails with `category 값이
+  올바르지 않아요: "general" (허용: bible, nonsense)` and a non-zero exit —
+  verified explicitly in `verify.mjs`.
+- `WEEKLY.md`: ratio table updated to bible 90%/~27 and nonsense 10%/~3 (30-
+  question basis); explains the fallback-to-other-category and capped-count-
+  when-bank-is-small behavior; dropped the `general` row from the field table
+  and the recommended-count line.
+- `example-week.json`: replaced the 4 `general` sample questions with 3 new
+  `bible` questions (one per... all 4 levels) with unique text not present in
+  the real bank; still passes `--dry-run` validation without writing.
 
-## `docs/WEEKLY.md`
+## `verify/verify.mjs`
 
-Korean doc explaining the weekly format (30/level/week, ~21/6/3 split), every field's
-meaning, how to run `npm run add-week -- <file>` (and `--dry-run`), and the git
-add/commit/push flow to deploy.
-
-## Verify (`verify/verify.mjs`)
-
-Kept `VERIFY_WS_URL`, buffered `waitFor`, and all pre-existing scenarios unchanged
-(church/room, movement/zones, difficulty levels). Added a new section:
-
-- **Categories present + mixing ratio + level sourcing + no repeats**: plays a full
-  default (30-question) game end-to-end and asserts every question has a valid
-  `category`, the exact 21/6/3 bible/general/nonsense split, every question belongs to
-  the room's level, and no question text repeats within the game.
-- **Recent-avoidance across two games, same church**: plays two consecutive
-  10-question games in the same room/church and asserts zero overlap in the bible
-  questions used (bank has 30 bible questions for 7+7=14 needed, so the bank "allows"
-  full avoidance).
-- **add-week validation**: spawns `scripts/add-week.mjs --dry-run` on a deliberately
-  broken file (invalid level, missing bible `ref`) and asserts a non-zero exit; spawns
-  it on `docs/example-week.json --dry-run` and asserts exit 0 and that no
-  `server/data/questions/2026-46.json` file gets written.
+- **Flaky score fix**: replaced the per-player `waitUntilInZone` + `Promise.all`
+  pattern (which could pass each player's arrival check at a different tick,
+  letting avatar-separation physics knock an earlier arrival back out of its
+  zone before reveal) with a single `waitUntilAllInZones` helper that waits for
+  one `positions` broadcast where *all* players are simultaneously inside their
+  chosen zone, with a generous timeout (`ZONE_ARRIVAL_TIMEOUT_MS`: 10s local /
+  20s remote) before calling `reveal`. The old single-player `waitUntilInZone`
+  helper (now unused) was removed.
+- **Category mix test**: now computes the elementary bank's actual pool size
+  and nonsense count at runtime instead of asserting hardcoded 30/21/6/3; when
+  the bank has no nonsense questions it asserts the whole game is bible-only,
+  otherwise it asserts the nonsense share is within ±2 of the 10% target. It
+  also asserts the game length equals `min(DEFAULT_QUESTION_COUNT, poolSize)`,
+  covering the "capped, no error, no repeats" requirement for a level whose
+  bank (18) is smaller than the default count (30).
+- **Recent-avoidance test**: game size is now derived from the middle-level
+  bank size (`min(10, floor(poolSize/2) - 1)`) instead of a hardcoded 10, so
+  the test stays valid (guaranteed non-overlapping fresh margin) even if the
+  bank shrinks further later. Comment/assert text no longer references the old
+  30-question/general-era numbers.
+- **New add-week test**: spawns `add-week.mjs --dry-run` on a file with
+  `category: 'general'` and asserts non-zero exit and that stderr mentions
+  `category`/`general`.
+- `VERIFY_WS_URL` / remote timeout support unchanged.
 
 ## Verification performed
 
 - `npm run build` — passes (`tsc` clean, `vite build` succeeds).
-- `npm run verify` — passes, run **3 times** consecutively, no flakes, including all
-  new category/recent-avoidance/add-week checks.
-- Manually ran `scripts/add-week.mjs` against `docs/example-week.json` (both normal and
-  `--dry-run`) and against a hand-crafted broken file, confirming correct accept/reject
-  behavior and that re-running on already-merged content is rejected as duplicate
-  id/text (not silently re-merged).
+- `npm run verify` — passes, run **5 times** consecutively (clean 0-exit, "ALL
+  CHECKS PASSED" every time), including the new capped-count/all-bible-fallback
+  category assertions, the adaptive recent-avoidance test, the new
+  `general`-rejection test, and no flakes from the zone-arrival/score fix.
 
-## Deploy note
-
-`server/data/questions/*.json` are plain files tracked by git (nothing in `.gitignore`
-excludes them), so a normal Render build/deploy picks them up automatically — no DB
-migration or extra build step needed. No commit was made as part of this change; the
-working tree is left for review before committing/pushing.
+No commit was made; the working tree (plus the pre-existing, untouched
+`server/data/questions/2026-45.json` diff and the stray `.xlsx` file from the
+owner) is left for review.
