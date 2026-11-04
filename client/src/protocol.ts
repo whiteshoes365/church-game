@@ -24,6 +24,28 @@ export interface LastResult {
   correctPlayerIds: string[];
 }
 
+export interface Rect {
+  xmin: number;
+  xmax: number;
+  zmin: number;
+  zmax: number;
+}
+
+export interface Zones {
+  O: Rect;
+  X: Rect;
+}
+
+export type MoveState = 'idle' | 'walk' | 'run' | 'crawl' | 'jump';
+
+export interface PlayerPosition {
+  id: string;
+  x: number;
+  z: number;
+  y: number;
+  state: MoveState;
+}
+
 export interface RoomSnapshot {
   id: string;
   churchId: string;
@@ -33,6 +55,9 @@ export interface RoomSnapshot {
   status: RoomStatus;
   players: PlayerSnapshot[];
   hasHost: boolean;
+  bounds?: Rect;
+  zones?: Zones;
+  questionDurationMs?: number;
   question: QuestionSnapshot | null;
   lastResult: LastResult | null;
 }

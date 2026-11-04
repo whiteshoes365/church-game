@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { getDeviceId } from '../deviceId';
@@ -10,6 +11,129 @@ import type { RoomSnapshot } from '../protocol';
 const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
 const QUESTION_DURATION_MS = 15000;
+const MOVE_SEND_INTERVAL_MS = 83; // ~12 Hz, as specified for the input throttle
+const JOYSTICK_RADIUS = 52;
+
+function Joystick({ onChange }: { onChange: (dir: { x: number; z: number }) => void }) {
+  const baseRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const [knob, setKnob] = useState({ x: 0, y: 0 });
+
+  function updateFromEvent(e: ReactPointerEvent<HTMLDivElement>) {
+    const base = baseRef.current;
+    if (!base) return;
+    const rect = base.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let dx = e.clientX - cx;
+    let dy = e.clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist > JOYSTICK_RADIUS) {
+      dx = (dx / dist) * JOYSTICK_RADIUS;
+      dy = (dy / dist) * JOYSTICK_RADIUS;
+    }
+    setKnob({ x: dx, y: dy });
+    onChange({ x: dx / JOYSTICK_RADIUS, z: dy / JOYSTICK_RADIUS });
+  }
+
+  function release() {
+    draggingRef.current = false;
+    setKnob({ x: 0, y: 0 });
+    onChange({ x: 0, z: 0 });
+  }
+
+  return (
+    <div
+      ref={baseRef}
+      className="joystick-base"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        draggingRef.current = true;
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        updateFromEvent(e);
+      }}
+      onPointerMove={(e) => {
+        if (!draggingRef.current) return;
+        e.preventDefault();
+        updateFromEvent(e);
+      }}
+      onPointerUp={(e) => {
+        e.preventDefault();
+        release();
+      }}
+      onPointerCancel={release}
+      onPointerLeave={() => {
+        if (draggingRef.current) release();
+      }}
+    >
+      <div className="joystick-knob" style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} />
+    </div>
+  );
+}
+
+function MovementControls({ roomId }: { roomId?: string }) {
+  const dirRef = useRef({ x: 0, z: 0 });
+  const runRef = useRef(false);
+  const crawlRef = useRef(false);
+  const [running, setRunning] = useState(false);
+  const [crawling, setCrawling] = useState(false);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      gameSocket.send('move', { roomId, dir: dirRef.current, run: runRef.current, crawl: crawlRef.current });
+    }, MOVE_SEND_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [roomId]);
+
+  function setRun(active: boolean) {
+    runRef.current = active;
+    setRunning(active);
+  }
+
+  return (
+    <div className="movement-controls">
+      <Joystick onChange={(dir) => { dirRef.current = dir; }} />
+      <div className="action-buttons">
+        <button
+          type="button"
+          className="action-btn jump-btn"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            gameSocket.send('jump', { roomId });
+          }}
+        >
+          점프
+        </button>
+        <button
+          type="button"
+          className={`action-btn run-btn ${running ? 'active' : ''}`}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            setRun(true);
+          }}
+          onPointerUp={() => setRun(false)}
+          onPointerCancel={() => setRun(false)}
+          onPointerLeave={() => {
+            if (runRef.current) setRun(false);
+          }}
+        >
+          달리기
+        </button>
+        <button
+          type="button"
+          className={`action-btn crawl-btn ${crawling ? 'active' : ''}`}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            crawlRef.current = !crawlRef.current;
+            setCrawling(crawlRef.current);
+          }}
+        >
+          기어가기
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function PlayerRoom() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -167,6 +291,11 @@ export function PlayerRoom() {
                 }}
               />
             </div>
+            <MovementControls roomId={roomId} />
+
+            <p className="picker-label" style={{ textAlign: 'center' }}>
+              O/X 버튼을 누르면 캐릭터가 알아서 걸어가요
+            </p>
             <div className="ox-buttons">
               <button className="ox-button o" disabled={answered} onClick={() => answer('O')}>
                 O

@@ -367,6 +367,81 @@ button {
   margin-bottom: 20px;
 }
 
+/* ---- phone player: joystick + action buttons ---- */
+.movement-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  touch-action: none;
+  user-select: none;
+}
+
+.joystick-base {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  min-width: 132px;
+  border-radius: 50%;
+  border: 5px solid var(--border);
+  background: var(--surface);
+  touch-action: none;
+  box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.08);
+}
+
+.joystick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 4px solid var(--border);
+  touch-action: none;
+}
+
+.action-buttons {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  flex: 1;
+}
+
+.action-btn {
+  padding: 16px 8px;
+  border-radius: 0;
+  border: 4px solid var(--border);
+  font-size: 16px;
+  font-weight: 800;
+  font-family: inherit;
+  color: #fff;
+  background: var(--text-dim);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  min-height: 56px;
+  box-shadow: inset -4px -4px 0 0 rgba(0, 0, 0, 0.25), inset 4px 4px 0 0 rgba(255, 255, 255, 0.3);
+}
+
+.action-btn.active {
+  background: var(--accent);
+  box-shadow: inset 4px 4px 0 0 rgba(0, 0, 0, 0.25), inset -4px -4px 0 0 rgba(255, 255, 255, 0.2);
+}
+
+.jump-btn {
+  background: var(--o-color);
+}
+
+.run-btn.active {
+  background: var(--accent-dark);
+}
+
+.crawl-btn.active {
+  background: var(--x-color);
+}
+
 /* ---- host big screen ---- */
 
 .host-screen {

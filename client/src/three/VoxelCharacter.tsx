@@ -4,6 +4,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { decodeAvatar, SKIN_TONES, BODY_COLORS, type HatType } from '../avatars';
 import { coneGeometry, getMaterial, sphereGeometry, unitBoxGeometry } from './shared';
+import type { MoveState } from '../protocol';
 
 const HAT_TYPES: HatType[] = ['none', 'cap', 'crown', 'helmet', 'flower', 'visor'];
 const PANTS_COLOR = '#2f3b52';
@@ -78,6 +79,7 @@ interface Props {
   showLabel?: boolean;
   spin?: boolean;
   facing?: number;
+  moveState?: MoveState;
 }
 
 export function VoxelCharacter({
@@ -89,6 +91,7 @@ export function VoxelCharacter({
   showLabel = true,
   spin = false,
   facing,
+  moveState,
 }: Props) {
   const { skin, body, hat } = decodeAvatar(avatarId);
   const skinColor = SKIN_TONES[skin];
@@ -133,11 +136,15 @@ export function VoxelCharacter({
     const bob = bobRef.current;
     if (!outer || !bob) return;
 
+    // Position (including server-driven jump height in target.y) is always
+    // smoothly interpolated toward the latest target, regardless of pose.
     const dist = outer.position.distanceTo(targetVec.current);
-    const walking = dist > 0.03 && reveal === 'idle';
+    const dx0 = targetVec.current.x - outer.position.x;
+    const dz0 = targetVec.current.z - outer.position.z;
+    const horizontalMoving = Math.hypot(dx0, dz0) > 0.03 && reveal === 'idle';
     if (dist > 0.001) {
       outer.position.lerp(targetVec.current, Math.min(1, delta * 3));
-      if (walking) {
+      if (horizontalMoving) {
         const dx = targetVec.current.x - outer.position.x;
         const dz = targetVec.current.z - outer.position.z;
         if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
@@ -145,18 +152,63 @@ export function VoxelCharacter({
         }
       }
     } else if (typeof facing === 'number') {
+      // Idle: face the camera, as requested.
       outer.rotation.y = THREE.MathUtils.lerp(outer.rotation.y, facing, delta * 6);
     }
 
+    // Pose/limb animation driven by the server's authoritative move state
+    // when available (walk/run/crawl/jump/idle); falls back to a simple
+    // distance heuristic for contexts with no live server state (avatar
+    // preview builder).
+    const activeState: MoveState = moveState ?? (horizontalMoving ? 'walk' : 'idle');
     const t = state.clock.elapsedTime + seed.current;
-    const swing = walking ? Math.sin(t * 10) * 0.6 : Math.sin(t * 1.6) * 0.05;
-    if (leftArmRef.current) leftArmRef.current.rotation.x = swing;
-    if (rightArmRef.current) rightArmRef.current.rotation.x = -swing;
-    if (leftLegRef.current) leftLegRef.current.rotation.x = -swing;
-    if (rightLegRef.current) rightLegRef.current.rotation.x = swing;
 
-    const hop = walking ? Math.abs(Math.sin(t * 10)) * 0.14 : Math.abs(Math.sin(t * 1.6)) * 0.035;
-    bob.position.y = hop;
+    let swingSpeed = 1.6;
+    let swingAmp = 0.05;
+    let hopAmp = 0.035;
+    let crouch = 0;
+    let lean = 0;
+    const tuck = activeState === 'jump';
+
+    switch (activeState) {
+      case 'walk':
+        swingSpeed = 10;
+        swingAmp = 0.6;
+        hopAmp = 0.14;
+        break;
+      case 'run':
+        swingSpeed = 15;
+        swingAmp = 0.9;
+        hopAmp = 0.22;
+        lean = 0.22;
+        break;
+      case 'crawl':
+        swingSpeed = 5;
+        swingAmp = 0.3;
+        hopAmp = 0.03;
+        crouch = 0.32;
+        lean = 0.5;
+        break;
+      default:
+        break;
+    }
+
+    if (tuck) {
+      if (leftArmRef.current) leftArmRef.current.rotation.x = -0.5;
+      if (rightArmRef.current) rightArmRef.current.rotation.x = -0.5;
+      if (leftLegRef.current) leftLegRef.current.rotation.x = -0.7;
+      if (rightLegRef.current) rightLegRef.current.rotation.x = -0.7;
+    } else {
+      const swing = Math.sin(t * swingSpeed) * swingAmp;
+      if (leftArmRef.current) leftArmRef.current.rotation.x = swing;
+      if (rightArmRef.current) rightArmRef.current.rotation.x = -swing;
+      if (leftLegRef.current) leftLegRef.current.rotation.x = -swing;
+      if (rightLegRef.current) rightLegRef.current.rotation.x = swing;
+    }
+
+    const hop = tuck ? 0 : Math.abs(Math.sin(t * swingSpeed)) * hopAmp;
+    bob.position.y = hop - crouch;
+    outer.rotation.x = THREE.MathUtils.lerp(outer.rotation.x, lean, delta * 5);
 
     if (spin) outer.rotation.y += delta * 0.9;
 
@@ -169,7 +221,6 @@ export function VoxelCharacter({
       outer.position.y = Math.max(0, Math.abs(Math.sin(t * 7)) * 0.4);
     } else {
       outer.rotation.z = THREE.MathUtils.lerp(outer.rotation.z, 0, delta * 6);
-      outer.position.y = THREE.MathUtils.lerp(outer.position.y, 0, delta * 6);
     }
   });
 

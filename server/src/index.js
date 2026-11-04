@@ -17,9 +17,17 @@ import {
   revealAnswer,
   serializeRoom,
   serializeRoomSummary,
+  setPlayerInput,
+  requestPlayerJump,
+  setAutoWalkTarget,
+  tickRoomPhysics,
+  serializePositions,
+  allRooms,
+  PHYSICS_TICK_MS,
 } from './state.js';
 
 const PORT = Number(process.env.PORT) || 8787;
+const POSITIONS_BROADCAST_MS = 80; // ~12.5 Hz, within the 10-15 Hz target
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 const MIME = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
@@ -51,6 +59,22 @@ function onQuestionTimeout(room) {
   revealAnswer(room);
   broadcastRoom(room);
 }
+
+// Authoritative movement simulation ticks for every room all the time (cheap
+// even with many rooms), but the compact position broadcast is only sent to
+// rooms that are actually "in play" (question/reveal) and have a host
+// watching, to keep bandwidth down.
+setInterval(() => {
+  for (const room of allRooms()) tickRoomPhysics(room, PHYSICS_TICK_MS);
+}, PHYSICS_TICK_MS);
+
+setInterval(() => {
+  for (const room of allRooms()) {
+    if (room.status !== 'question' && room.status !== 'reveal') continue;
+    if (!room.hostSocket) continue;
+    send(room.hostSocket, 'positions', { roomId: room.id, players: serializePositions(room) });
+  }
+}, POSITIONS_BROADCAST_MS);
 
 wss.on('connection', (socket) => {
   socket.meta = { roomId: null, deviceId: null, role: null };
@@ -113,6 +137,7 @@ function handleMessage(socket, msg) {
         title: msg.title,
         map: msg.map,
         capacity: msg.capacity,
+        questionSeconds: msg.questionSeconds,
       });
       room.hostSocket = socket;
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
@@ -153,10 +178,31 @@ function handleMessage(socket, msg) {
     }
 
     case 'answer': {
+      // Kept for backward compatibility: still marks `side` immediately for
+      // UI feedback, but the O/X quick-button fallback now also auto-walks
+      // the avatar into that zone. Final scoring always uses live zone
+      // position at reveal time, not this recorded choice.
       const room = getRoom(msg.roomId);
       if (!room) throw new Error('방을 찾을 수 없어요.');
       const ok = recordAnswer(room, socket.meta.deviceId, msg.choice);
-      if (ok) broadcastRoom(room);
+      if (ok) {
+        setAutoWalkTarget(room, socket.meta.deviceId, msg.choice);
+        broadcastRoom(room);
+      }
+      break;
+    }
+
+    case 'move': {
+      const room = getRoom(msg.roomId);
+      if (!room) throw new Error('방을 찾을 수 없어요.');
+      if (socket.meta.deviceId) setPlayerInput(room, socket.meta.deviceId, { dir: msg.dir, run: msg.run, crawl: msg.crawl });
+      break;
+    }
+
+    case 'jump': {
+      const room = getRoom(msg.roomId);
+      if (!room) throw new Error('방을 찾을 수 없어요.');
+      if (socket.meta.deviceId) requestPlayerJump(room, socket.meta.deviceId);
       break;
     }
 

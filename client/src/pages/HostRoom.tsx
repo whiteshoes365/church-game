@@ -4,7 +4,7 @@ import { gameSocket } from '../ws';
 import { AvatarIcon } from '../components/AvatarIcon';
 import { BannerAdSlot } from '../components/BannerAdSlot';
 import { isWebGLAvailable } from '../three/webgl';
-import type { PlayerSnapshot, RoomSnapshot } from '../protocol';
+import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
 
 const HostCanvas3D = lazy(() => import('../three/HostCanvas3D'));
 
@@ -35,6 +35,7 @@ export function HostRoom() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const [room, setRoom] = useState<RoomSnapshot | null>(null);
+  const [positions, setPositions] = useState<Record<string, PlayerPosition>>({});
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
@@ -46,9 +47,18 @@ export function HostRoom() {
       if (msg.room.id === roomId) setRoom(msg.room);
     });
     const offError = gameSocket.on('error', (msg) => setError(msg.message));
+    const offPositions = gameSocket.on('positions', (msg) => {
+      if (msg.roomId !== roomId) return;
+      setPositions((prev) => {
+        const next = { ...prev };
+        for (const p of msg.players as PlayerPosition[]) next[p.id] = p;
+        return next;
+      });
+    });
     return () => {
       offState();
       offError();
+      offPositions();
     };
   }, [roomId]);
 
@@ -136,6 +146,8 @@ export function HostRoom() {
                     players={room.players}
                     status={room.status}
                     correctAnswer={room.lastResult?.correctAnswer ?? null}
+                    positions={positions}
+                    zones={room.zones}
                   />
                 </div>
               </Suspense>
