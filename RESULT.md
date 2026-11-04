@@ -1,119 +1,103 @@
 # RESULT
 
-## Free-roam movement for OX quiz players (2026-11-04)
+## 4 difficulty levels for the OX Bible quiz (2026-11-04)
 
-Players can now freely drive their avatar around the map from their phone (joystick + jump/run/crawl),
-the server simulates movement authoritatively, and O/X answers are decided by which zone the avatar is
-physically standing in when the question resolves. `toss-app/` was not touched.
+Added four selectable difficulty levels — 초등(elementary), 중등(middle), 고등(high), 청년(youth) — each
+with its own ~30-question OX bank, wired end to end (server question selection, protocol, room
+create/list/host UI, verify coverage). `toss-app/` was not touched.
 
-## Protocol additions
+## Question content (`server/src/questions.js`)
 
-All additions are backward compatible — existing message types and `RoomSnapshot` fields are unchanged,
-only new optional fields/messages were added.
+- `LEVELS = ['elementary', 'middle', 'high', 'youth']`, `LEVEL_LABELS` (Korean), `DEFAULT_LEVEL = 'elementary'`.
+- `QUESTIONS_BY_LEVEL[level]` — 30 questions per level, 120 total. Every question has `{ id, text, answer, explanation }`;
+  `explanation` is a short Korean sentence citing book/chapter:verse, shown on reveal.
+- `normalizeLevel(level)` / `questionsForLevel(level)` fall back to `DEFAULT_LEVEL` for any unrecognized value.
+- The original 30-question set was kept as the basis of the elementary level (same simple wording/well-known
+  stories); ~9 of the weaker-fit/duplicative true statements were swapped for new false (X) statements on
+  other well-known stories so O/X stays balanced, rather than keeping a skewed 24 O/6 X split.
+- **Every question text is globally unique across all 120 questions** (verified by script), since `verify.mjs`
+  looks up a question's answer by text alone, independent of which level it belongs to.
+- Every answer was checked against the Bible text (no quotes used beyond common, uncontroversial renderings).
+  Youth-level authorship/theology questions stick to what the Bible states about itself (e.g. Exodus 24:4 for
+  Mosaic authorship, epistle openings that name their sender, Hebrews' known anonymity) or hedge with
+  "전통적으로"(traditionally) for early-church-tradition attributions, and avoid denomination-specific or
+  scholarly-disputed claims (no higher-criticism authorship disputes, no eschatology-position questions, etc.).
 
-- **`createRoom` request**: optional `questionSeconds` (number). Sets `room.questionDurationMs` for that
-  room's questions (default stays 15000ms / `QUESTION_DURATION_MS`). Used by `verify.mjs` to keep tests fast.
-- **`RoomSnapshot`** (sent in `roomCreated`/`roomState`/`joined`) gains two constant fields so the client
-  never has to hardcode geometry:
-  - `bounds: {xmin,xmax,zmin,zmax}` — the walkable map rectangle.
-  - `zones: { O: {xmin,xmax,zmin,zmax}, X: {...} }` — the two answer zones, positioned under the O/X
-    letter structures in the 3D scene.
-  - `questionDurationMs: number`.
-- **Client → server `move`**: `{ roomId, dir: {x, z}, run?: boolean, crawl?: boolean }`. `dir` is a
-  joystick vector (each axis roughly -1..1, un-normalized is fine — server clamps/normalizes). Intended
-  to be sent by the phone at ~12 Hz while the joystick/d-pad is touched. Any non-trivial `dir` cancels an
-  in-progress auto-walk (see `answer` below).
-- **Client → server `jump`**: `{ roomId }`. One-shot; server applies a short cooldown (600ms) and ignores
-  repeat requests while already airborne.
-- **`answer` (existing message, now also a movement trigger)**: still records `side` immediately for
-  backward-compatible UI feedback and still only accepts one answer per question. *New*: it also sets an
-  auto-walk target at the center of the chosen O/X zone, so the O/X quick buttons now make the avatar walk
-  itself there (at a brisk fixed speed) instead of just flipping a flag. Manual joystick/d-pad input
-  cancels this auto-walk.
-- **Server → host `positions`** (new, ~12.5 Hz / 80ms): `{ roomId, players: [{ id, x, z, y, state }] }`
-  where `state` is `'idle' | 'walk' | 'run' | 'crawl' | 'jump'`. Sent only to `room.hostSocket`, and only
-  while `room.status` is `'question'` or `'reveal'` (i.e. the room is "in play") — not during lobby/finished,
-  to avoid pointless bandwidth. Not sent to players (phones don't render the 3D scene).
+**Counts per level** (verified by script, each level O/X-balanced):
 
-## Answer resolution rule (authoritative, documented in `server/src/state.js`)
+| Level | Label | Count | O | X |
+|---|---|---|---|---|
+| elementary | 초등 | 30 | 15 | 15 |
+| middle | 중등 | 30 | 15 | 15 |
+| high | 고등 | 30 | 15 | 15 |
+| youth | 청년 | 30 | 15 | 15 |
+| **Total** | | **120** | **60** | **60** |
 
-> Whichever O/X zone the avatar is physically standing in when the question is revealed (by host action or
-> timeout) is authoritative — `player.side` is overwritten with that zone (`'O'`, `'X'`, or `null`) at
-> reveal time, regardless of any earlier explicit `answer` message. Standing in neither zone counts as no
-> answer / wrong.
+**Sample questions (2 per level):**
 
-This means a host who reveals immediately after players press O/X (with zero travel time) will score based
-on wherever players physically are, not what they clicked — same as a real teacher watching kids run to a
-side of the room. The default 15s question timer (or a host-configured `questionSeconds`) is expected to
-give enough time to walk/auto-walk there.
+- 초등: "노아는 큰 홍수를 피하려고 커다란 배(방주)를 만들었어요." → **O** (창세기 6:14) · "엘리야는 걸어서 세상을 떠났어요." → **X** (실제로는 불병거를 타고 하늘로 올라감, 열왕기하 2:11)
+- 중등: "야곱은 얍복강에서 하나님(천사)과 씨름한 후 이름이 이스라엘로 바뀌었어요." → **O** (창세기 32:24-28) · "기드온은 3만 2천 명의 큰 군대로 미디안을 물리쳤어요." → **X** (실제로는 300명, 사사기 7:7)
+- 고등: "북이스라엘은 앗시리아 제국에 의해 멸망했어요." → **O** (열왕기하 17장) · "히브리서는 구약성경에 포함된 책이에요." → **X** (신약성경 27권 중 하나)
+- 청년: "에베소서는 사람이 자신의 선한 행위로 구원을 얻는다고 가르쳐요." → **X** (실제로는 은혜로 구원받는다고 가르침, 에베소서 2:8-9) · "로마서는 사람이 행위가 아니라 하나님의 은혜와 믿음으로 의롭다 하심을 받는다는 가르침을 중심으로 다뤄요." → **O** (로마서 3:23-24, 5:1)
 
-## Server simulation (`server/src/state.js`)
+## Protocol / server changes
 
-- Fixed-tick physics loop at `PHYSICS_TICK_MS = 50` (20 Hz), one global `setInterval` in `index.js` ticking
-  every room (not one timer per room).
-- Speeds: walk `2.2`, run `4.2`, crawl `1.0` units/sec; O/X-button auto-walk uses `4.2` (same as run) so it
-  arrives briskly. Jump: initial velocity `4.5`, gravity `-12`, ~600ms cooldown, arc height tracked as `y`.
-- Position is clamped to `MAP_BOUNDS` every tick.
-- Simple O(n²) pairwise separation (push-apart below `0.6` units) so avatars don't stack heavily — fine at
-  the player counts this game supports.
-- `MAP_BOUNDS`/`ZONES`/`WALK_SPEED`/`RUN_SPEED`/`CRAWL_SPEED`/etc. are exported from `state.js` so
-  `verify.mjs` can import the same constants instead of duplicating magic numbers.
+- `createRoom` accepts optional `level` (`msg.level` in `index.js` → `createRoom({ ..., level })` in `state.js`);
+  invalid/missing values fall back to `'elementary'` via `normalizeLevel`.
+- `room.level` is stored on the room and included in both `serializeRoom` (snapshot) and `serializeRoomSummary`
+  (room list). `startQuiz`/`currentQuestion` now draw from `QUESTIONS_BY_LEVEL[room.level]` instead of a single
+  global array.
+- `revealAnswer` now sets `lastResult.explanation` from the current question's `explanation` field. Backward
+  compatible: `LastResult.explanation` is optional in the client type, and old clients ignore the extra field.
 
 ## Client changes
 
-- **`client/src/pages/PlayerRoom.tsx`**: new `Joystick` (pointer events, touch-action: none, works for
-  touch and mouse) and `MovementControls` (큰 액션 버튼: 점프/달리기(홀드)/기어가기(토글)) rendered inside the
-  existing question card, above the still-present O/X buttons (now documented in-UI as "자동으로 걸어가요").
-  Movement is sent on a fixed ~83ms (`~12Hz`) interval reading the latest joystick vector + run/crawl flags.
-- **`client/src/three/HostScene3D.tsx`**: rewritten to position every `VoxelCharacter` from the live
-  `positions` feed (`x`, `y`, `z`, `state`) instead of the old static per-side grid layout; O/X letter
-  structures are positioned from the server-sent `zones` so visuals and hit-testing can't drift apart.
-  Reveal pose (`correct`/`wrong`) is now driven uniformly by `player.side === correctAnswer` (so a
-  zone-less player at reveal falls over like a wrong answer, matching the resolution rule).
-- **`client/src/three/VoxelCharacter.tsx`**: new optional `moveState` prop drives distinct poses — walk
-  (moderate swing/hop), run (faster swing + forward lean), crawl (low crouch, slow swing), jump (tucked
-  limbs, no bob — actual height comes from the server `y` already being lerped into position). Falls back
-  to the old distance-based walk/idle heuristic when `moveState` is omitted (used by `AvatarPreview3D`, so
-  the avatar builder preview is unaffected). Idle still faces the camera; moving still faces the direction
-  of travel — unchanged from before.
-- **`client/src/pages/HostRoom.tsx`**: subscribes to `positions` broadcasts into a `{id: PlayerPosition}`
-  map, passed to `HostCanvas3D`/`HostScene3D` along with `room.zones`.
+- **`client/src/protocol.ts`**: new `Level` type; `RoomSnapshot`/`RoomSummary` gain `level: Level`; `LastResult`
+  gains optional `explanation?: string | null`.
+- **`client/src/levels.ts`** (new): shared `LEVEL_OPTIONS`/`LEVEL_LABELS`/`LEVEL_CLASS` used by all screens below.
+- **`client/src/pages/HostRooms.tsx`**: new 2×2 "난이도를 골라주세요" block picker (`.level-picker`/`.level-block`,
+  big colored buttons — green/blue/orange/purple for 초등/중등/고등/청년), defaulting to 초등; selected level is
+  sent with `createRoom`. Room list items now show a `badge-level` badge alongside the lobby/진행중 status badge.
+- **`client/src/pages/HostRoom.tsx`**: header shows the room's level badge next to the player count; the reveal
+  banner now also renders `lastResult.explanation` (new `.explanation-text` style) when present.
+- **`client/src/pages/PlayerRooms.tsx`**: room list items show the same level badge as the host's list.
+- **`client/src/pages/PlayerRoom.tsx`**: reveal card shows the explanation text under the O/X result banner when present.
+- **`client/src/index.css`**: added `--level-*` color vars, `.badge-level`, `.level-picker`/`.level-block`
+  (kid-friendly big buttons, matching the existing chunky-block visual style), `.explanation-text`.
 
 ## Verify coverage (`verify/verify.mjs`)
 
-Added a second room/scenario (uses `questionSeconds: 12` to stay fast) on top of the existing
-church/room/join/score-3-rounds flow, covering:
-- Moving two players into the O and X zones via raw `move` input, leaving a third player outside both —
-  then confirming `reveal` scores/`side` match the zone each player is actually standing in (not what they
-  clicked), including the "outside both zones = null/wrong" case.
-- Run speed > walk speed > crawl speed, measured end-to-end through real `move` messages → physics tick →
-  `positions` broadcast (not just reading server constants), with a 1.3x margin to absorb timing jitter.
-- Jump: after a `jump` message, a `positions` sample with `y > 0.05` and `state === 'jump'` is observed.
-- Auto-walk via the legacy `answer` message (O/X quick button): confirms `side` updates immediately
-  (backward compat) and that the avatar actually arrives in that zone before reveal, then scores correctly.
-- The pre-existing 3-round score test was updated: since `answer` no longer scores instantly, it now waits
-  for each player's auto-walk to land in their chosen zone (via a `waitUntilInZone` poll, run concurrently
-  across players) before calling `reveal`, instead of revealing immediately.
+Kept `VERIFY_WS_URL` support, the buffered `waitFor`, and all existing church/room/score/movement tests
+unchanged. Added a new "difficulty level tests" section (uses a fresh church/host/player so it doesn't disturb
+the earlier scenarios) covering:
+- Default level: `createRoom` without `level` returns `room.level === 'elementary'` in both the `roomCreated`
+  snapshot and `listRooms` summary.
+- Invalid level (`'not-a-real-level'`) falls back to `'elementary'` without erroring.
+- Each of the 4 levels: creating a room with that `level` returns the same value in the snapshot and in the
+  room list summary.
+- Quiz question sourcing: starts a 3-question quiz for `middle` and separately for `youth`, and for every
+  question revealed, asserts its text is a member of that level's question set and *not* a member of any other
+  level's set (cross-checked against `QUESTIONS_BY_LEVEL` imported from `server/src/questions.js`).
+
+Question lookup in the pre-existing helpers (`answerFor`) was switched from the old single `QUESTIONS` array to
+a flattened `ALL_QUESTIONS` built from `QUESTIONS_BY_LEVEL`, since questions are now level-scoped but text is
+still globally unique.
 
 ## Verification performed
 
 - `npm run build` — passes (`tsc` clean, `vite build` succeeds).
-- `npm run verify` — passes, run 3 times consecutively, no flakes (~14–15s each run).
-- Manual browser check (headless Chrome via CDP, screenshots): phone joystick/buttons render correctly
-  (big, kid-friendly, Korean labels); host 3D scene renders the avatar at its live server position; dragging
-  the phone joystick visibly moved the avatar in the host's 3D view end-to-end (phone input → WS → server
-  physics → `positions` broadcast → host render). Did not script a full drag-and-release visual check of
-  every pose (run/crawl/jump animations) in a real browser — those are covered by the VoxelCharacter pose
-  logic and the protocol-level verify assertions (y>0 during jump, speed ordering) rather than a pixel-level
-  visual diff.
+- `npm run verify` — passes, run 3 times consecutively, no flakes.
+- Content script check: all 120 questions have unique text, unique ids, valid `O`/`X` answers, and a non-empty
+  `explanation`; O/X counts are exactly 15/15 per level (60/60 overall).
+- Manual browser check (Playwright + Chromium against the built client served by the server): host "방 만들기"
+  screen shows the 2×2 level picker defaulting to 초등 selected; picking 중등 and creating a room shows a
+  "중등" badge on the host room screen header and in both the host's and player's room lists.
 
 ## Caveats
 
-- Positions are only broadcast to the host, not to other players (phones don't render the 3D map, so this
-  keeps bandwidth down — flagged as optional ("if useful") in the task).
-- The pairwise separation physics is O(n²) per tick; fine for the player counts this game targets, would
-  need spatial partitioning if rooms ever grew into the hundreds.
-- `answer`'s auto-walk speed is fixed (same as run) regardless of map distance, so a player on the far
-  side of the map takes a few seconds to visually arrive — the default 15s (or host-configured
-  `questionSeconds`) question timer is expected to comfortably cover this; a host revealing within ~1s of
-  the question starting could catch slower-spawned players still en route.
+- Youth-level theology questions intentionally stay within material broadly shared across Protestant churches
+  (e.g. justification by faith in Romans/Galatians/Ephesians, the Trinity not being a literal Bible word) and
+  avoid denomination-specific or scholarly-disputed claims (e.g. no higher-criticism authorship disputes for
+  Isaiah/Pentateuch, no eschatology-position questions).
+- `QUESTIONS` is still exported from `questions.js` (aliased to the elementary set) since nothing imports it
+  directly anymore, but keeping it avoids an unnecessary breaking removal for any external tooling.

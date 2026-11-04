@@ -312,6 +312,7 @@ export function PlayerRoom() {
           <div className="card stack">
             <p className="question-text">{room.lastResult.questionText}</p>
             <div className="reveal-banner">정답은 {room.lastResult.correctAnswer} 예요!</div>
+            {room.lastResult.explanation && <p className="explanation-text">{room.lastResult.explanation}</p>}
             {me && (
               <p className={room.lastResult.correctPlayerIds.includes(me.id) ? 'result-correct' : 'result-wrong'}>
                 {room.lastResult.correctPlayerIds.includes(me.id) ? '정답이에요! 점수를 얻었어요.' : '아쉬워요, 틀렸어요.'}

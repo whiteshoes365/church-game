@@ -2,8 +2,13 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { QUESTIONS } from '../server/src/questions.js';
+import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL } from '../server/src/questions.js';
 import { ZONES, MAP_BOUNDS, WALK_SPEED, RUN_SPEED, CRAWL_SPEED } from '../server/src/state.js';
+
+// Question text is unique across all levels (verify looks questions up by
+// text alone), so a single flat lookup works regardless of which level a
+// room is actually using.
+const ALL_QUESTIONS = Object.values(QUESTIONS_BY_LEVEL).flat();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -21,7 +26,7 @@ function assert(condition, message) {
 }
 
 function answerFor(questionText) {
-  const q = QUESTIONS.find((q) => q.text === questionText);
+  const q = ALL_QUESTIONS.find((q) => q.text === questionText);
   if (!q) throw new Error(`unknown question text: ${questionText}`);
   return q.answer;
 }
@@ -418,6 +423,88 @@ async function main() {
     assert(m3Final.side === correct2, '자동 이동으로 도착한 구역이 최종 판정에 반영되어야 함');
     assert(m3Final.score === 1, 'OX 버튼 자동 이동으로 정답 구역에 도착하면 점수를 얻어야 함');
     log('auto-walk via O/X quick button verified');
+
+    // 6. 난이도(level) 기능 검증
+    log('--- difficulty level tests ---');
+    const host3 = new Client('host3');
+    const lp = new Client('level-player');
+    await Promise.all([host3.ready(), lp.ready()]);
+
+    const church3Name = `검증교회-난이도-${Date.now()}`;
+    host3.send('findOrCreateChurch', { name: church3Name });
+    const church3 = await host3.waitFor('churchJoined');
+    const church3Id = church3.church.id;
+
+    // 6a. level을 지정하지 않으면 기본값은 'elementary'여야 함
+    host3.send('createRoom', { churchId: church3Id, title: '기본난이도방', map: 'sanctuary', capacity: 4 });
+    const defaultRoom = await host3.waitFor('roomCreated');
+    assert(defaultRoom.room.level === 'elementary', `level을 지정하지 않으면 기본값 'elementary'여야 하는데 '${defaultRoom.room.level}'`);
+    assert(defaultRoom.room.level === DEFAULT_LEVEL, 'questions.js의 DEFAULT_LEVEL과 일치해야 함');
+    log(`default level ok: ${defaultRoom.room.level}`);
+
+    host3.send('listRooms', { churchId: church3Id });
+    const listAfterDefault = await host3.waitFor('roomList');
+    const defaultSummary = listAfterDefault.rooms.find((r) => r.id === defaultRoom.room.id);
+    assert(defaultSummary && defaultSummary.level === 'elementary', '방 목록 요약(summary)에도 level이 포함되어야 함');
+
+    // 6b. 유효하지 않은 level은 기본값(elementary)으로 대체되어야 함 (에러 없이)
+    host3.send('createRoom', { churchId: church3Id, title: '이상한난이도방', map: 'sanctuary', capacity: 4, level: 'not-a-real-level' });
+    const invalidLevelRoom = await host3.waitFor('roomCreated');
+    assert(invalidLevelRoom.room.level === DEFAULT_LEVEL, `잘못된 level은 '${DEFAULT_LEVEL}'로 대체되어야 하는데 '${invalidLevelRoom.room.level}'`);
+    log('invalid level falls back to elementary ok');
+
+    // 6c. 각 level로 방을 만들면 그 level이 snapshot과 방 목록에 그대로 반영되어야 함
+    const levelRoomIds = {};
+    for (const level of LEVELS) {
+      host3.send('createRoom', { churchId: church3Id, title: `${level}방`, map: 'sanctuary', capacity: 'unlimited', level });
+      const created = await host3.waitFor('roomCreated', (msg) => msg.room.title === `${level}방`);
+      assert(created.room.level === level, `createRoom({level:'${level}'})의 결과 room.level은 '${level}'이어야 하는데 '${created.room.level}'`);
+      levelRoomIds[level] = created.room.id;
+    }
+    host3.send('listRooms', { churchId: church3Id });
+    const listAfterLevels = await host3.waitFor('roomList');
+    for (const level of LEVELS) {
+      const summary = listAfterLevels.rooms.find((r) => r.id === levelRoomIds[level]);
+      assert(summary, `방 목록에 ${level} 방이 있어야 함`);
+      assert(summary.level === level, `방 목록 요약의 level이 '${level}'이어야 하는데 '${summary.level}'`);
+    }
+    log(`room level reflected in snapshot & room list for: ${LEVELS.join(', ')}`);
+
+    // 6d. 퀴즈에 출제되는 문제가 실제로 선택한 level의 문제 세트에서만 나와야 함
+    // (middle, youth 두 레벨을 샘플로 짧게 퀴즈를 돌려 확인)
+    lp.send('joinRoom', { roomId: levelRoomIds.middle, deviceId: 'device-level-player', nickname: '레벨확인' });
+    await lp.waitFor('joined');
+    await host3.waitFor('roomState', (msg) => msg.room.id === levelRoomIds.middle && msg.room.players.length === 1);
+
+    for (const level of ['middle', 'youth']) {
+      const roomId = levelRoomIds[level];
+      const levelTexts = new Set(QUESTIONS_BY_LEVEL[level].map((q) => q.text));
+      const otherLevelTexts = new Set(
+        LEVELS.filter((l) => l !== level).flatMap((l) => QUESTIONS_BY_LEVEL[l].map((q) => q.text)),
+      );
+      if (level !== 'middle') {
+        lp.send('joinRoom', { roomId, deviceId: 'device-level-player', nickname: '레벨확인' });
+        await lp.waitFor('joined');
+        await host3.waitFor('roomState', (msg) => msg.room.id === roomId && msg.room.players.length === 1);
+      }
+      host3.send('startQuiz', { roomId, questionCount: 3 });
+      for (let round = 0; round < 3; round++) {
+        const q = await host3.waitFor(
+          'roomState',
+          (msg) => msg.room.id === roomId && msg.room.status === 'question' && msg.room.question?.index === round,
+        );
+        const text = q.room.question.text;
+        assert(levelTexts.has(text), `'${level}' 퀴즈 문제 "${text}"는 ${level} 문제 세트에 포함되어야 함`);
+        assert(!otherLevelTexts.has(text), `'${level}' 퀴즈 문제 "${text}"는 다른 level 문제 세트와 겹치면 안 됨`);
+        host3.send('reveal', { roomId });
+        await host3.waitFor('roomState', (msg) => msg.room.id === roomId && msg.room.status === 'reveal');
+        host3.send('nextQuestion', { roomId });
+      }
+      log(`quiz questions for level '${level}' all drawn from that level's set (3/3 rounds)`);
+    }
+
+    host3.close();
+    lp.close();
 
     host2.close();
     m1.close();

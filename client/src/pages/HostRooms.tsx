@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
-import type { Capacity, MapTheme, RoomSummary } from '../protocol';
+import type { Capacity, Level, MapTheme, RoomSummary } from '../protocol';
+import { DEFAULT_LEVEL, LEVEL_CLASS, LEVEL_LABELS, LEVEL_OPTIONS } from '../levels';
 
 const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
   { value: 'sanctuary', label: '예배당' },
@@ -25,6 +26,7 @@ export function HostRooms() {
   const [title, setTitle] = useState('OX 성경 퀴즈');
   const [map, setMap] = useState<MapTheme>('sanctuary');
   const [capacity, setCapacity] = useState<Capacity>(8);
+  const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
 
   useEffect(() => {
     gameSocket.connect();
@@ -45,7 +47,7 @@ export function HostRooms() {
 
   function createRoom() {
     if (!title.trim()) return;
-    gameSocket.send('createRoom', { churchId, title: title.trim(), map, capacity });
+    gameSocket.send('createRoom', { churchId, title: title.trim(), map, capacity, level });
   }
 
   return (
@@ -56,6 +58,19 @@ export function HostRooms() {
 
         <div className="card stack">
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="방 제목" />
+          <p className="picker-label">난이도를 골라주세요</p>
+          <div className="level-picker">
+            {LEVEL_OPTIONS.map((l) => (
+              <button
+                key={l.value}
+                type="button"
+                className={`level-block ${l.className} ${level === l.value ? 'selected' : ''}`}
+                onClick={() => setLevel(l.value)}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
           <div className="row">
             {MAP_OPTIONS.map((m) => (
               <button
@@ -90,7 +105,10 @@ export function HostRooms() {
                 <div className="room-item-title">{room.title}</div>
                 <div className="room-item-meta">참여 {room.playerCount}명</div>
               </div>
-              <span className="badge">{room.status === 'lobby' ? '대기중' : '진행중'}</span>
+              <div className="row" style={{ gap: 6 }}>
+                <span className={`badge badge-level ${LEVEL_CLASS[room.level]}`}>{LEVEL_LABELS[room.level]}</span>
+                <span className="badge">{room.status === 'lobby' ? '대기중' : '진행중'}</span>
+              </div>
             </div>
           ))}
         </div>

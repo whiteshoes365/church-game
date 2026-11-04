@@ -138,6 +138,7 @@ function handleMessage(socket, msg) {
         map: msg.map,
         capacity: msg.capacity,
         questionSeconds: msg.questionSeconds,
+        level: msg.level,
       });
       room.hostSocket = socket;
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };

@@ -1,6 +1,7 @@
 export type RoomStatus = 'lobby' | 'question' | 'reveal' | 'finished';
 export type Capacity = 4 | 8 | 'unlimited';
 export type MapTheme = 'sanctuary' | 'playground' | 'forest';
+export type Level = 'elementary' | 'middle' | 'high' | 'youth';
 
 export interface PlayerSnapshot {
   id: string;
@@ -22,6 +23,7 @@ export interface LastResult {
   questionText: string;
   correctAnswer: 'O' | 'X';
   correctPlayerIds: string[];
+  explanation?: string | null;
 }
 
 export interface Rect {
@@ -51,6 +53,7 @@ export interface RoomSnapshot {
   churchId: string;
   title: string;
   map: MapTheme;
+  level: Level;
   capacity: Capacity;
   status: RoomStatus;
   players: PlayerSnapshot[];
@@ -66,6 +69,7 @@ export interface RoomSummary {
   id: string;
   title: string;
   map: MapTheme;
+  level: Level;
   capacity: Capacity;
   playerCount: number;
   status: RoomStatus;

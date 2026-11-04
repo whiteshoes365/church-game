@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { QUESTIONS } from './questions.js';
+import { QUESTIONS_BY_LEVEL, DEFAULT_LEVEL, normalizeLevel } from './questions.js';
 
 export const QUESTION_DURATION_MS = 15000;
 
@@ -230,7 +230,7 @@ export function listRooms(churchId) {
   return [...rooms.values()].filter((r) => r.churchId === churchId);
 }
 
-export function createRoom({ churchId, title, map, capacity, questionSeconds }) {
+export function createRoom({ churchId, title, map, capacity, questionSeconds, level }) {
   const church = getChurch(churchId);
   if (!church) throw new Error('교회를 찾을 수 없어요.');
   const room = {
@@ -238,6 +238,7 @@ export function createRoom({ churchId, title, map, capacity, questionSeconds }) 
     churchId,
     title: (title || '방').trim(),
     map: map || 'sanctuary',
+    level: normalizeLevel(level),
     capacity: capacity === 'unlimited' ? 'unlimited' : Number(capacity) || 8,
     hostSocket: null,
     players: new Map(), // deviceId -> player
@@ -295,8 +296,9 @@ function shuffledIndices(n) {
 
 export function startQuiz(room, questionCount) {
   clearTimer(room);
-  const count = Math.min(questionCount || QUESTIONS.length, QUESTIONS.length);
-  room.questionOrder = shuffledIndices(QUESTIONS.length).slice(0, count);
+  const questions = QUESTIONS_BY_LEVEL[room.level];
+  const count = Math.min(questionCount || questions.length, questions.length);
+  room.questionOrder = shuffledIndices(questions.length).slice(0, count);
   room.currentIndex = -1;
   room.lastResult = null;
   for (const p of room.players.values()) {
@@ -307,7 +309,7 @@ export function startQuiz(room, questionCount) {
 
 export function currentQuestion(room) {
   if (room.currentIndex < 0 || room.currentIndex >= room.questionOrder.length) return null;
-  return QUESTIONS[room.questionOrder[room.currentIndex]];
+  return QUESTIONS_BY_LEVEL[room.level][room.questionOrder[room.currentIndex]];
 }
 
 export function clearTimer(room) {
@@ -368,6 +370,7 @@ export function revealAnswer(room) {
     questionText: q.text,
     correctAnswer: q.answer,
     correctPlayerIds,
+    explanation: q.explanation ?? null,
   };
 }
 
@@ -378,6 +381,7 @@ export function serializeRoom(room) {
     churchId: room.churchId,
     title: room.title,
     map: room.map,
+    level: room.level,
     capacity: room.capacity,
     status: room.status,
     players: [...room.players.values()].map((p) => ({
@@ -410,6 +414,7 @@ export function serializeRoomSummary(room) {
     id: room.id,
     title: room.title,
     map: room.map,
+    level: room.level,
     capacity: room.capacity,
     playerCount: room.players.size,
     status: room.status,

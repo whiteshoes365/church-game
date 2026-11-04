@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import type { RoomSummary } from '../protocol';
+import { LEVEL_CLASS, LEVEL_LABELS } from '../levels';
 
 const MAP_LABEL: Record<string, string> = {
   sanctuary: '예배당',
@@ -52,7 +53,10 @@ export function PlayerRooms() {
                   {MAP_LABEL[room.map]} · 인원 {room.playerCount}/{CAPACITY_LABEL[String(room.capacity)]}
                 </div>
               </div>
-              <span className="badge">{room.status === 'lobby' ? '대기중' : '진행중'}</span>
+              <div className="row" style={{ gap: 6 }}>
+                <span className={`badge badge-level ${LEVEL_CLASS[room.level]}`}>{LEVEL_LABELS[room.level]}</span>
+                <span className="badge">{room.status === 'lobby' ? '대기중' : '진행중'}</span>
+              </div>
             </div>
           ))}
         </div>

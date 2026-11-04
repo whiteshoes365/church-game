@@ -5,6 +5,7 @@ import { AvatarIcon } from '../components/AvatarIcon';
 import { BannerAdSlot } from '../components/BannerAdSlot';
 import { isWebGLAvailable } from '../three/webgl';
 import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
+import { LEVEL_CLASS, LEVEL_LABELS } from '../levels';
 
 const HostCanvas3D = lazy(() => import('../three/HostCanvas3D'));
 
@@ -85,8 +86,9 @@ export function HostRoom() {
           <h1 className="title" style={{ textAlign: 'left' }}>
             {room.title}
           </h1>
-          <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>
+          <p className="subtitle" style={{ textAlign: 'left', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             참여 인원 {room.players.length}명
+            <span className={`badge badge-level ${LEVEL_CLASS[room.level]}`}>{LEVEL_LABELS[room.level]}</span>
           </p>
         </div>
         <div className="row">
@@ -132,8 +134,11 @@ export function HostRoom() {
             )}
 
             {room.status === 'reveal' && room.lastResult && (
-              <div className="reveal-banner">
-                정답: {room.lastResult.correctAnswer} · {room.lastResult.questionText}
+              <div className="reveal-banner stack">
+                <span>
+                  정답: {room.lastResult.correctAnswer} · {room.lastResult.questionText}
+                </span>
+                {room.lastResult.explanation && <p className="explanation-text">{room.lastResult.explanation}</p>}
               </div>
             )}
           </div>
