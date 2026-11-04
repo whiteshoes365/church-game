@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { AvatarIcon } from '../components/AvatarIcon';
 import { BannerAdSlot } from '../components/BannerAdSlot';
+import { isWebGLAvailable } from '../three/webgl';
 import type { PlayerSnapshot, RoomSnapshot } from '../protocol';
+
+const HostCanvas3D = lazy(() => import('../three/HostCanvas3D'));
 
 const QUESTION_DURATION_MS = 15000;
 
@@ -34,6 +37,7 @@ export function HostRoom() {
   const [room, setRoom] = useState<RoomSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
   useEffect(() => {
     gameSocket.connect();
@@ -97,53 +101,69 @@ export function HostRoom() {
         </div>
       </div>
 
-      {room.status === 'question' && room.question && (
-        <div className="card stack">
-          <span className="badge">
-            문제 {room.question.index + 1} / {room.question.total}
-          </span>
-          <p className="question-text">{room.question.text}</p>
-          <div className="timer-bar">
-            <div
-              className="timer-bar-fill"
-              style={{
-                width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / QUESTION_DURATION_MS) * 100))}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {room.status === 'reveal' && room.lastResult && (
-        <div className="reveal-banner">
-          정답: {room.lastResult.correctAnswer} · {room.lastResult.questionText}
-        </div>
-      )}
-
       <div className="host-main">
-        <div className={`map-area ${MAP_CLASS[room.map]}`}>
-          {room.status !== 'lobby' && (
-            <div className="map-zones">
-              <div className="map-zone">
-                <div className="map-zone-sign o">O</div>
+        <div className="map-area-3d">
+          {webglAvailable ? (
+            <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
+              <div className="canvas-fill">
+                <HostCanvas3D
+                  players={room.players}
+                  status={room.status}
+                  correctAnswer={room.lastResult?.correctAnswer ?? null}
+                />
               </div>
-              <div className="map-zone">
-                <div className="map-zone-sign x">X</div>
+            </Suspense>
+          ) : (
+            <div className={`map-area ${MAP_CLASS[room.map]}`}>
+              {room.status !== 'lobby' && (
+                <div className="map-zones">
+                  <div className="map-zone">
+                    <div className="map-zone-sign o">O</div>
+                  </div>
+                  <div className="map-zone">
+                    <div className="map-zone-sign x">X</div>
+                  </div>
+                </div>
+              )}
+              <div className="map-avatars">
+                {room.players.map((p) => {
+                  const pos = positionFor(p);
+                  return (
+                    <div key={p.id} className="map-avatar" style={{ left: pos.left, top: pos.top }}>
+                      <div className="map-avatar-sprite">
+                        <AvatarIcon avatarId={p.avatar} size={36} />
+                      </div>
+                      <span className="map-avatar-name">{p.nickname}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
-          <div className="map-avatars">
-            {room.players.map((p) => {
-              const pos = positionFor(p);
-              return (
-                <div key={p.id} className="map-avatar" style={{ left: pos.left, top: pos.top }}>
-                  <div className="map-avatar-sprite">
-                    <AvatarIcon avatarId={p.avatar} size={36} />
-                  </div>
-                  <span className="map-avatar-name">{p.nickname}</span>
+
+          <div className="host-hud">
+            {room.status === 'question' && room.question && (
+              <div className="card stack">
+                <span className="badge">
+                  문제 {room.question.index + 1} / {room.question.total}
+                </span>
+                <p className="question-text">{room.question.text}</p>
+                <div className="timer-bar">
+                  <div
+                    className="timer-bar-fill"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / QUESTION_DURATION_MS) * 100))}%`,
+                    }}
+                  />
                 </div>
-              );
-            })}
+              </div>
+            )}
+
+            {room.status === 'reveal' && room.lastResult && (
+              <div className="reveal-banner">
+                정답: {room.lastResult.correctAnswer} · {room.lastResult.questionText}
+              </div>
+            )}
           </div>
         </div>
 

@@ -226,6 +226,32 @@ button {
   padding: 8px 0 12px;
 }
 
+.avatar-preview-3d {
+  width: 140px;
+  height: 140px;
+  border: 3px solid var(--border);
+  background: #101522;
+  overflow: hidden;
+}
+
+.avatar-preview-3d canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.voxel-name-tag {
+  font-family: 'Galmuri11', 'DungGeunMo', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  padding: 2px 7px;
+  border: 2px solid var(--border);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .picker-label {
   font-size: 13px;
   font-weight: 700;
@@ -369,13 +395,44 @@ button {
   gap: 24px;
 }
 
-.map-area {
+.map-area-3d {
   position: relative;
   border-radius: 0;
   border: 6px solid var(--border);
   overflow: hidden;
   min-height: 480px;
   box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.2);
+  background: #bfe3f0;
+}
+
+.canvas-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas-fill canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.host-hud {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.map-area {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  overflow: hidden;
 }
 
 /* grass base + grid lines + dirt patches, built entirely from CSS gradients */

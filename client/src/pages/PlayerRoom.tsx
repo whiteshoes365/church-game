@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { getDeviceId } from '../deviceId';
 import { BODY_COLORS, DEFAULT_AVATAR_CONFIG, HATS, SKIN_TONES, encodeAvatar, type AvatarConfig } from '../avatars';
 import { AvatarIcon } from '../components/AvatarIcon';
+import { isWebGLAvailable } from '../three/webgl';
 import type { RoomSnapshot } from '../protocol';
+
+const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
 const QUESTION_DURATION_MS = 15000;
 
@@ -20,6 +23,7 @@ export function PlayerRoom() {
   const avatar = useMemo(() => encodeAvatar(avatarConfig), [avatarConfig]);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
   useEffect(() => {
     gameSocket.connect();
@@ -71,7 +75,15 @@ export function PlayerRoom() {
 
           <div className="avatar-builder card">
             <div className="avatar-preview">
-              <AvatarIcon avatarId={avatar} size={72} />
+              {webglAvailable ? (
+                <div className="avatar-preview-3d">
+                  <Suspense fallback={<AvatarIcon avatarId={avatar} size={72} />}>
+                    <AvatarPreview3D avatarId={avatar} />
+                  </Suspense>
+                </div>
+              ) : (
+                <AvatarIcon avatarId={avatar} size={72} />
+              )}
             </div>
 
             <p className="picker-label">피부색</p>
