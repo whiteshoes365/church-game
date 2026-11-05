@@ -14,7 +14,8 @@
     "build": "npm install --include=dev && npm run build -w client",
     "verify": "node verify/verify.mjs",
     "start": "node server/src/index.js",
-    "verify:remote": "node verify/verify.mjs"
+    "verify:remote": "node verify/verify.mjs",
+    "gen-gemini": "node scripts/gen-questions-gemini.mjs"
   },
   "devDependencies": {
     "ws": "^8.18.0"
