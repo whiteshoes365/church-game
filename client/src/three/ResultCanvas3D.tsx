@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { Clouds } from './Clouds';
 import { VoxelCharacter } from './VoxelCharacter';
 import { getMaterial, unitBoxGeometry } from './shared';
+import type { Cosmetics } from '../protocol';
 
 // 게임 종료 결과 무대: 팀(또는 등수)마다 블록 단상을 쌓고, 이긴 쪽은 높은
 // 단상 위에서 폴짝폴짝 뛰어요. 하늘에서는 색종이 블록이 떨어져요.
@@ -12,21 +13,23 @@ export interface ResultColumn {
   color: string;
   height: number; // 단상 높이(블록 수)
   winner: boolean;
-  members: { id: string; nickname: string; avatar: string }[];
+  members: { id: string; nickname: string; avatar: string; cosmetics?: Cosmetics }[];
 }
 
-const MAX_COLS = 4;
+const MAX_COLS = 6; // 한 줄에 최대 6명, 넘으면 뒷줄(반 칸 어긋나게)
 const SPACING = 1.9;
 const CONFETTI_COLORS = ['#e2483d', '#3182f6', '#45b35c', '#f5b400', '#ec5fa3', '#9b59b6', '#ffffff'];
 
 function columnFootprint(count: number) {
-  const cols = Math.max(2, Math.min(MAX_COLS, count));
+  const perRow = Math.min(MAX_COLS, Math.max(1, count));
   const rows = Math.max(1, Math.ceil(count / MAX_COLS));
-  return { cols, rows, width: cols * SPACING + 0.4, depth: rows * SPACING + 0.9 };
+  // 여러 줄이면 뒷줄을 반 칸 밀어 세우므로 그만큼 넓게
+  const cols = Math.max(2, perRow) + (rows > 1 ? 0.5 : 0);
+  return { perRow, rows, width: cols * SPACING + 0.4, depth: rows * SPACING + 0.9 };
 }
 
 function Podium({ column, x }: { column: ResultColumn; x: number }) {
-  const { cols, width, depth } = columnFootprint(column.members.length);
+  const { perRow, rows, width, depth } = columnFootprint(column.members.length);
   const mat = useMemo(() => getMaterial(column.color, 0.7), [column.color]);
   const trimMat = useMemo(() => getMaterial('#1c2330'), []);
   const goldMat = useMemo(() => getMaterial('#f5c518', 0.35), []);
@@ -45,15 +48,26 @@ function Podium({ column, x }: { column: ResultColumn; x: number }) {
         </group>
       )}
       {column.members.map((m, i) => {
-        const row = Math.floor(i / MAX_COLS);
-        const inRow = Math.min(cols, column.members.length - row * MAX_COLS);
+        const row = Math.floor(i / MAX_COLS); // 0 = 맨 뒷줄
         const col = i % MAX_COLS;
-        const px = (col - (inRow - 1) / 2) * SPACING;
-        const rows = Math.ceil(column.members.length / MAX_COLS);
+        const inRow = Math.min(perRow, column.members.length - row * MAX_COLS);
+        // 줄마다 가운데 정렬 + 줄이 바뀔 때마다 반 칸씩 어긋나게 → 뒷줄 얼굴이 앞줄 사이로 보인다.
+        const shift = rows > 1 ? (row % 2 === 0 ? -SPACING / 4 : SPACING / 4) : 0;
+        const px = (col - (inRow - 1) / 2) * SPACING + shift;
         const pz = (row - (rows - 1) / 2) * SPACING + (col % 2 === 0 ? 0.25 : -0.25);
         return (
           <group key={m.id} position={[px, h, pz]}>
-            <VoxelCharacter avatarId={m.avatar} nickname={m.nickname} target={[0, 0, 0]} reveal={column.winner ? 'correct' : 'idle'} scale={1.25} facing={0} />
+            <VoxelCharacter
+              avatarId={m.avatar}
+              cosmetics={m.cosmetics}
+              nickname={m.nickname}
+              target={[0, 0, 0]}
+              reveal={column.winner ? 'correct' : 'idle'}
+              scale={1.25}
+              facing={0}
+              labelSmall
+              labelLift={(col % 2 === 0 ? 0 : 0.42) + (rows - 1 - row) * 0.95}
+            />
           </group>
         );
       })}

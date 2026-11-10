@@ -37,6 +37,13 @@ import {
   adjustTalent,
   recordGame,
   groupSummary,
+  claimNickname,
+  releaseNickname,
+  setWeeklyCap,
+  nickKey,
+  shopState,
+  buyItem,
+  equipItem,
 } from './records.js';
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -64,8 +71,36 @@ function send(socket, type, payload) {
 
 function broadcastRoom(room) {
   const snapshot = serializeRoom(room);
-  const sockets = [room.hostSocket, ...[...room.players.values()].map((p) => p.socket)];
-  for (const s of sockets) send(s, 'roomState', { room: snapshot });
+  for (const p of room.players.values()) send(p.socket, 'roomState', { room: snapshot });
+  // 호스트에게만 방 PIN 이 담긴 스냅샷을 보낸다.
+  send(room.hostSocket, 'roomState', { room: serializeRoom(room, { forHost: true }) });
+}
+
+// ---- 방 PIN / 호스트 확인 ----
+const JOIN_MAX_FAILS = 5;
+const JOIN_LOCK_MS = 30000;
+// 없는 방이든 PIN 이 틀렸든 같은 안내를 준다 (방이 있는지 굳이 알려 주지 않는다).
+const JOIN_FAIL_MESSAGE = '방에 들어갈 수 없어요. 선생님이 알려 준 방 PIN 숫자 4자리를 다시 확인해 주세요.';
+
+function failJoin(socket) {
+  const f = socket.joinFails;
+  f.count += 1;
+  if (f.count >= JOIN_MAX_FAILS) {
+    f.count = 0;
+    f.lockedUntil = Date.now() + JOIN_LOCK_MS;
+  }
+  throw new Error(JOIN_FAIL_MESSAGE);
+}
+
+function pinMatches(room, pin) {
+  return typeof pin === 'string' && pin === room.pin;
+}
+
+// 반 기록에 연결된 방이면 닉네임 주인 확인 + 착용 아이템 불러오기.
+// 다른 친구가 먼저 쓴 닉네임이면 여기서 오류가 난다.
+function claimForRoom(room, { deviceId, nickname, avatar }) {
+  if (!room.groupCode) return null;
+  return claimNickname(room.groupCode, { nickname, deviceId, avatar });
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +150,7 @@ function pushGroup(code) {
 }
 
 function markRoomAttendance(room, player) {
-  if (!room.groupCode) return null;
+  if (!room.groupCode || !player.recordKey) return null;
   try {
     return markAttendance(room.groupCode, { nickname: player.nickname, avatar: player.avatar });
   } catch (err) {
@@ -130,9 +165,10 @@ function finalizeGame(room) {
   if (room.status !== 'finished' || room.finalResult || room.questions.length === 0) return;
   const result = buildFinalResult(room);
   room.finalResult = result;
-  if (!room.groupCode || room.players.size === 0) return;
+  // 닉네임 주인 확인을 통과한 친구만 반 장부에 기록한다.
+  const players = [...room.players.values()].filter((p) => p.recordKey);
+  if (!room.groupCode || players.length === 0) return;
   try {
-    const players = [...room.players.values()];
     const { awards } = recordGame(room.groupCode, {
       roomTitle: room.title,
       level: room.level,
@@ -160,7 +196,18 @@ function finalizeGame(room) {
 function linkRoomToGroup(socket, room, code, pin) {
   const c = pin ? authGroup(socket, code, pin, false).code : requireGroupAuth(socket, code);
   room.groupCode = c;
-  for (const p of room.players.values()) markRoomAttendance(room, p);
+  // 이미 들어와 있는 친구들: 닉네임이 다른 기기 것이면 기록에서만 빼고 게임은 그대로 한다.
+  for (const p of room.players.values()) {
+    try {
+      const claim = claimForRoom(room, { deviceId: p.id, nickname: p.nickname, avatar: p.avatar });
+      p.recordKey = claim.key;
+      p.cosmetics = claim.equipped;
+    } catch {
+      p.recordKey = null;
+      p.cosmetics = {};
+    }
+    markRoomAttendance(room, p);
+  }
   pushGroup(c);
 }
 
@@ -188,6 +235,7 @@ setInterval(() => {
 wss.on('connection', (socket) => {
   socket.meta = { roomId: null, deviceId: null, role: null };
   socket.groupAuth = new Set(); // 이 소켓이 교사 PIN 으로 연 반 코드들
+  socket.joinFails = { count: 0, lockedUntil: 0 }; // 방 PIN 틀린 횟수
 
   socket.on('message', (raw) => {
     let msg;
@@ -251,6 +299,7 @@ function handleMessage(socket, msg) {
         questionSeconds: msg.questionSeconds,
         level: msg.level,
         questionCount: msg.questionCount,
+        pin: msg.pin,
       });
       room.hostSocket = socket;
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
@@ -263,27 +312,52 @@ function handleMessage(socket, msg) {
         }
       }
       if (msg.teamMode) setTeamMode(room, { enabled: true, count: msg.teamCount, bonus: msg.teamBonus });
-      send(socket, 'roomCreated', { room: serializeRoom(room) });
+      send(socket, 'roomCreated', { room: serializeRoom(room, { forHost: true }), hostKey: room.hostKey });
       break;
     }
 
     case 'hostOpenRoom': {
       const room = getRoom(msg.roomId);
-      if (!room) throw new Error('방을 찾을 수 없어요.');
+      // 호스트 화면은 방을 만든 브라우저(hostKey) 또는 방 PIN 을 아는 사람만 열 수 있다.
+      if (socket.joinFails.lockedUntil > Date.now()) throw new Error('여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.');
+      if (!room || !(msg.hostKey === room.hostKey || pinMatches(room, msg.pin))) {
+        socket.joinFails.count += 1;
+        if (socket.joinFails.count >= JOIN_MAX_FAILS) socket.joinFails = { count: 0, lockedUntil: Date.now() + JOIN_LOCK_MS };
+        send(socket, 'hostAuthRequired', { roomId: msg.roomId, message: '호스트 화면을 열려면 방 PIN 숫자 4자리를 입력해 주세요.' });
+        break;
+      }
+      socket.joinFails.count = 0;
       room.hostSocket = socket;
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
-      send(socket, 'roomState', { room: serializeRoom(room) });
+      send(socket, 'roomState', { room: serializeRoom(room, { forHost: true }) });
       break;
     }
 
     case 'joinRoom': {
+      if (socket.joinFails.lockedUntil > Date.now()) throw new Error('PIN을 여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.');
       const room = getRoom(msg.roomId);
-      if (!room) throw new Error('방을 찾을 수 없어요.');
+      if (!msg.deviceId || typeof msg.deviceId !== 'string') throw new Error('기기 정보를 확인할 수 없어요. 새로고침 후 다시 들어와 주세요.');
+      // 이미 이 방에 들어와 있던 기기(새로고침·재접속)는 PIN 을 다시 묻지 않는다.
+      const already = room?.players.get(msg.deviceId);
+      if (!room || (!already && !pinMatches(room, msg.pin))) failJoin(socket);
+      socket.joinFails.count = 0;
+      const nickname = String(msg.nickname ?? '').trim().replace(/\s+/g, ' ').slice(0, 12) || already?.nickname || '친구';
+      // 같은 방 안에서도 닉네임은 한 명만 (먼저 들어온 친구 우선).
+      const wantedKey = nickKey(nickname);
+      for (const other of room.players.values()) {
+        if (other.id !== msg.deviceId && nickKey(other.nickname) === wantedKey) {
+          throw new Error(`"${other.nickname}"은(는) 이 방에서 이미 다른 친구가 쓰고 있는 이름이에요. 다른 이름을 골라 주세요!`);
+        }
+      }
+      // 반 기록이 연결된 방이면 반 전체에서 닉네임 주인 확인 (먼저 등록한 친구 우선).
+      const claim = claimForRoom(room, { deviceId: msg.deviceId, nickname, avatar: msg.avatar });
       const player = joinRoom(room, {
         deviceId: msg.deviceId,
-        nickname: msg.nickname,
+        nickname,
         avatar: msg.avatar,
       });
+      player.recordKey = claim ? claim.key : null;
+      player.cosmetics = claim ? claim.equipped : {};
       player.socket = socket;
       socket.meta = { roomId: room.id, deviceId: msg.deviceId, role: 'player' };
       const attendance = markRoomAttendance(room, player);
@@ -382,7 +456,13 @@ function handleMessage(socket, msg) {
       const room = requireHostRoom(socket, msg.roomId);
       if (room.status !== 'lobby' && room.status !== 'finished') throw new Error('반 연결은 게임 시작 전에만 바꿀 수 있어요.');
       if (msg.code) linkRoomToGroup(socket, room, msg.code, msg.pin);
-      else room.groupCode = null;
+      else {
+        room.groupCode = null;
+        for (const p of room.players.values()) {
+          p.recordKey = null;
+          p.cosmetics = {};
+        }
+      }
       broadcastRoom(room);
       break;
     }
@@ -391,6 +471,47 @@ function handleMessage(socket, msg) {
       const code = requireGroupAuth(socket, msg.code);
       adjustTalent(code, { nickname: msg.nickname, delta: msg.delta, reason: msg.reason });
       pushGroup(code);
+      break;
+    }
+
+    case 'groupSettings': {
+      const code = requireGroupAuth(socket, msg.code);
+      if (msg.weeklyCap !== undefined) setWeeklyCap(code, msg.weeklyCap);
+      pushGroup(code);
+      break;
+    }
+
+    case 'groupReleaseNickname': {
+      const code = requireGroupAuth(socket, msg.code);
+      releaseNickname(code, msg.nickname);
+      pushGroup(code);
+      break;
+    }
+
+    // ---- 달란트 상점 (학생: 자기 닉네임의 주인으로 방에 들어와 있어야 함) ----
+    case 'shopOpen': {
+      const { room, player } = requireShopPlayer(socket, msg.roomId);
+      send(socket, 'shopData', { shop: shopState(room.groupCode, player.recordKey) });
+      break;
+    }
+
+    case 'shopBuy': {
+      const { room, player } = requireShopPlayer(socket, msg.roomId);
+      const { charged, state } = buyItem(room.groupCode, player.recordKey, msg.itemId);
+      player.cosmetics = state.equipped;
+      send(socket, 'shopData', { shop: state, charged, itemId: msg.itemId });
+      broadcastRoom(room);
+      pushGroup(room.groupCode);
+      break;
+    }
+
+    case 'shopEquip': {
+      const { room, player } = requireShopPlayer(socket, msg.roomId);
+      const state = equipItem(room.groupCode, player.recordKey, msg.itemId, msg.equip !== false);
+      player.cosmetics = state.equipped;
+      send(socket, 'shopData', { shop: state });
+      broadcastRoom(room);
+      pushGroup(room.groupCode);
       break;
     }
 
@@ -405,6 +526,14 @@ function handleMessage(socket, msg) {
     default:
       send(socket, 'error', { message: `알 수 없는 메시지 타입: ${msg.type}` });
   }
+}
+
+function requireShopPlayer(socket, roomId) {
+  const room = getRoom(roomId);
+  const player = room && socket.meta.role === 'player' && socket.meta.roomId === room.id ? room.players.get(socket.meta.deviceId) : null;
+  if (!player) throw new Error('방에 먼저 들어와 주세요.');
+  if (!room.groupCode || !player.recordKey) throw new Error('상점은 선생님이 반 기록을 연결한 방에서만 열려요.');
+  return { room, player };
 }
 
 function requireHostRoom(socket, roomId) {

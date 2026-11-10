@@ -4,7 +4,8 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { decodeAvatar, SKIN_TONES, BODY_COLORS, type HatType } from '../avatars';
 import { coneGeometry, getMaterial, sphereGeometry, unitBoxGeometry } from './shared';
-import type { MoveState } from '../protocol';
+import type { Cosmetics, MoveState } from '../protocol';
+import { OutfitOverlay, outfitMaterials, ShopExtra, ShopHat, SHOP_HAT_IDS } from './Cosmetics3D';
 
 const HAT_TYPES: HatType[] = ['none', 'cap', 'crown', 'helmet', 'flower', 'visor'];
 const PANTS_COLOR = '#2f3b52';
@@ -80,6 +81,9 @@ interface Props {
   spin?: boolean;
   facing?: number;
   moveState?: MoveState;
+  cosmetics?: Cosmetics; // 상점에서 사서 착용한 아이템
+  labelSmall?: boolean; // 결과 무대처럼 여럿이 붙어 설 때 작은 이름표
+  labelLift?: number; // 이웃 이름표와 겹치지 않게 위로 올리는 높이
 }
 
 export function VoxelCharacter({
@@ -92,6 +96,9 @@ export function VoxelCharacter({
   spin = false,
   facing,
   moveState,
+  cosmetics,
+  labelSmall = false,
+  labelLift = 0,
 }: Props) {
   const { skin, body, hat } = decodeAvatar(avatarId);
   const skinColor = SKIN_TONES[skin];
@@ -127,7 +134,11 @@ export function VoxelCharacter({
   }, [reveal]);
 
   const skinMat = useMemo(() => getMaterial(skinColor), [skinColor]);
-  const bodyMat = useMemo(() => getMaterial(bodyColor), [bodyColor]);
+  const baseBodyMat = useMemo(() => getMaterial(bodyColor), [bodyColor]);
+  const outfit = useMemo(() => outfitMaterials(cosmetics?.outfit), [cosmetics?.outfit]);
+  const bodyMat = outfit?.body ?? baseBodyMat;
+  const armMat = outfit?.arm ?? baseBodyMat;
+  const shopHat = cosmetics?.hat && SHOP_HAT_IDS.includes(cosmetics.hat) ? cosmetics.hat : null;
   const pantsMat = useMemo(() => getMaterial(PANTS_COLOR), []);
   const shoeMat = useMemo(() => getMaterial(SHOE_COLOR), []);
 
@@ -228,14 +239,16 @@ export function VoxelCharacter({
     <group ref={outerRef} scale={scale}>
       <group ref={bobRef}>
         <mesh geometry={unitBoxGeometry} material={skinMat} scale={0.5} position={[0, HEAD_Y, 0]} castShadow />
-        <Hat type={hatType} />
+        {shopHat ? <ShopHat id={shopHat} headTop={HEAD_Y + 0.25} /> : <Hat type={hatType} />}
         <mesh geometry={unitBoxGeometry} material={bodyMat} scale={[0.5, BODY_H, 0.3]} position={[0, BODY_Y, 0]} castShadow />
+        {cosmetics?.outfit && <OutfitOverlay id={cosmetics.outfit} bodyY={BODY_Y} bodyH={BODY_H} shoulderY={SHOULDER_Y} />}
+        {cosmetics?.extra && <ShopExtra id={cosmetics.extra} bodyY={BODY_Y} headY={HEAD_Y} shoulderY={SHOULDER_Y} />}
 
         <group ref={leftArmRef} position={[-0.33, SHOULDER_Y, 0]}>
-          <mesh geometry={unitBoxGeometry} material={bodyMat} scale={[0.16, 0.5, 0.16]} position={[0, -0.25, 0]} castShadow />
+          <mesh geometry={unitBoxGeometry} material={armMat} scale={[0.16, 0.5, 0.16]} position={[0, -0.25, 0]} castShadow />
         </group>
         <group ref={rightArmRef} position={[0.33, SHOULDER_Y, 0]}>
-          <mesh geometry={unitBoxGeometry} material={bodyMat} scale={[0.16, 0.5, 0.16]} position={[0, -0.25, 0]} castShadow />
+          <mesh geometry={unitBoxGeometry} material={armMat} scale={[0.16, 0.5, 0.16]} position={[0, -0.25, 0]} castShadow />
         </group>
 
         <group ref={leftLegRef} position={[-0.13, LEG_TOP, 0]}>
@@ -248,8 +261,8 @@ export function VoxelCharacter({
         </group>
 
         {showLabel && nickname && (
-          <Html position={[0, HEAD_Y + 0.6, 0]} center distanceFactor={11} occlude={false}>
-            <div className="voxel-name-tag">{nickname}</div>
+          <Html position={[0, HEAD_Y + (shopHat ? 0.85 : 0.6) + labelLift, 0]} center distanceFactor={11} occlude={false}>
+            <div className={`voxel-name-tag ${labelSmall ? 'small' : ''}`}>{nickname}</div>
           </Html>
         )}
       </group>

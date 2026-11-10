@@ -7,7 +7,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { SHOP_ITEMS, getShopItem } from './shop.js';
 
 const DEFAULT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data/church-records');
 
@@ -26,7 +27,15 @@ export const TALENT_RULES = {
   teamBonusDefault: 2, // 팀 대결 승리 팀원 보너스 기본값 (교사가 0~5로 조정)
   teamBonusMax: 5,
   manualMax: 100, // 교사 수동 조정 1회 한도 (±)
+  // 주간 상한: 학생 한 명이 한 주(KST)에 자동 지급(참가·등수·만점·연속 출석·팀 보너스)으로
+  // 받을 수 있는 최대 달란트. 반마다 교사가 weeklyCapMin~weeklyCapMax 사이로 바꿀 수 있다.
+  // 교사 수동 조정은 상한과 무관하게 적용되고(상한 예외로 장부에 표시), 상점 지출은 상한을 쓰지 않는다.
+  weeklyCapDefault: 20,
+  weeklyCapMin: 1,
+  weeklyCapMax: 100,
 };
+
+const AUTO_KINDS = new Set(['game', 'team', 'streak']);
 
 export const STREAK_BADGES = [
   { weeks: 8, id: 'diamond', label: '다이아 개근' },
@@ -83,8 +92,10 @@ export function normalizeCode(code) {
   return c;
 }
 
+// 닉네임 비교 키: 전각/반각·조합형 차이(NFKC), 대소문자, 모든 공백을 무시한다.
+// "꼬마 사자", " 꼬마사자 ", "꼬마사자" 는 같은 이름으로 본다.
 export function nickKey(nickname) {
-  return String(nickname ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return String(nickname ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '');
 }
 
 function cleanNickname(nickname) {
@@ -125,6 +136,15 @@ function loadGroup(code) {
   group.members ||= {};
   group.ledger ||= [];
   group.games ||= [];
+  group.settings ||= {};
+  // 예전 파일의 닉네임 키(공백 유지)를 지금 규칙의 키로 옮긴다.
+  for (const [oldKey, m] of Object.entries(group.members)) {
+    const key = nickKey(m.nickname);
+    if (key === oldKey || !key || group.members[key]) continue;
+    group.members[key] = m;
+    delete group.members[oldKey];
+    for (const e of group.ledger) if (e.key === oldKey) e.key = key;
+  }
   cache.set(code, group);
   return group;
 }
@@ -152,6 +172,7 @@ export function openGroup(code, pin, { create = false, now = Date.now() } = {}) 
     createdAt: now,
     pinSalt,
     pinHash: hashPin(pin, pinSalt),
+    settings: { weeklyCap: TALENT_RULES.weeklyCapDefault },
     members: {},
     ledger: [],
     games: [],
@@ -210,7 +231,87 @@ function pushLedger(group, entry) {
   }
 }
 
-function addLedger(group, { key, nickname, delta, reason, kind, gameId = null, now }) {
+// ---- 주간 상한 / 잔액 ----
+export function weeklyCapOf(group) {
+  const cap = Math.round(Number(group.settings?.weeklyCap));
+  if (!Number.isFinite(cap)) return TALENT_RULES.weeklyCapDefault;
+  return Math.min(TALENT_RULES.weeklyCapMax, Math.max(TALENT_RULES.weeklyCapMin, cap));
+}
+
+export function setWeeklyCap(code, cap) {
+  const group = requireGroup(code);
+  const n = Math.round(Number(cap));
+  if (!Number.isFinite(n) || n < TALENT_RULES.weeklyCapMin || n > TALENT_RULES.weeklyCapMax) {
+    throw new Error(`주간 상한은 ${TALENT_RULES.weeklyCapMin}~${TALENT_RULES.weeklyCapMax} 사이로 정해 주세요.`);
+  }
+  group.settings.weeklyCap = n;
+  saveGroup(group);
+  return n;
+}
+
+// 이번 주에 자동 지급으로 받은 달란트 (상한 계산에 쓰이는 값)
+function weekAutoEarned(group, key, week) {
+  let sum = 0;
+  for (const e of group.ledger) if (e.key === key && e.week === week && AUTO_KINDS.has(e.kind) && e.delta > 0) sum += e.delta;
+  return sum;
+}
+
+function balanceOf(group, key) {
+  let sum = group.members[key]?.carried || 0;
+  for (const e of group.ledger) if (e.key === key) sum += e.delta;
+  return sum;
+}
+
+// 자동 지급 항목들을 주간 상한 안에서만 장부에 적는다.
+// 상한에 걸리면 남은 만큼만 주고("주간 상한으로 n개만 지급"), 아예 못 준 항목들은
+// 0달란트 한 줄로 묶어 기록해서 왜 안 들어왔는지 장부에서 보이게 한다.
+function grantAuto(group, key, member, parts, { now, gameId = null }) {
+  const week = isoWeekKST(now);
+  const cap = weeklyCapOf(group);
+  let remaining = Math.max(0, cap - weekAutoEarned(group, key, week));
+  const granted = [];
+  const skipped = [];
+  for (const part of parts) {
+    const give = Math.min(part.delta, remaining);
+    remaining -= give;
+    if (give === part.delta) {
+      addLedger(group, { key, nickname: member.nickname, delta: give, reason: part.reason, kind: part.kind, gameId, now });
+      granted.push({ ...part, requested: part.delta, capped: false });
+    } else if (give > 0) {
+      addLedger(group, {
+        key,
+        nickname: member.nickname,
+        delta: give,
+        reason: `${part.reason} (주간 상한으로 ${give}개만 지급)`,
+        kind: part.kind,
+        gameId,
+        now,
+        requested: part.delta,
+        capped: true,
+      });
+      granted.push({ ...part, delta: give, requested: part.delta, capped: true });
+    } else {
+      skipped.push(part);
+      granted.push({ ...part, delta: 0, requested: part.delta, capped: true });
+    }
+  }
+  if (skipped.length > 0) {
+    addLedger(group, {
+      key,
+      nickname: member.nickname,
+      delta: 0,
+      reason: `주간 상한 ${cap}개 도달 · 지급 없음 (${skipped.map((p) => `${p.reason} +${p.delta}`).join(', ')})`,
+      kind: skipped[0].kind,
+      gameId,
+      now,
+      requested: skipped.reduce((sum, p) => sum + p.delta, 0),
+      capped: true,
+    });
+  }
+  return { parts: granted, weekRemaining: remaining, weeklyCap: cap };
+}
+
+function addLedger(group, { key, nickname, delta, reason, kind, gameId = null, now, ...extra }) {
   const entry = {
     id: randomUUID(),
     at: now,
@@ -219,8 +320,9 @@ function addLedger(group, { key, nickname, delta, reason, kind, gameId = null, n
     nickname,
     delta,
     reason,
-    kind, // 'game' | 'team' | 'streak' | 'manual'
+    kind, // 'game' | 'team' | 'streak' | 'manual' | 'shop'
     gameId,
+    ...extra, // requested/capped (상한으로 깎임), override (교사 상한 예외), itemId (상점)
   };
   pushLedger(group, entry);
   return entry;
@@ -238,15 +340,8 @@ export function markAttendance(code, { nickname, avatar = null, via = 'join', no
     newlyMarked = true;
     const streak = streakOf(member, week);
     if (streak >= TALENT_RULES.streakWeeks && TALENT_RULES.streakBonus > 0) {
-      streakBonus = TALENT_RULES.streakBonus;
-      addLedger(group, {
-        key,
-        nickname: member.nickname,
-        delta: streakBonus,
-        reason: `연속 출석 ${streak}주 보너스`,
-        kind: 'streak',
-        now,
-      });
+      const res = grantAuto(group, key, member, [{ delta: TALENT_RULES.streakBonus, reason: `연속 출석 ${streak}주 보너스`, kind: 'streak' }], { now });
+      streakBonus = res.parts[0].delta;
     }
   }
   saveGroup(group);
@@ -273,7 +368,18 @@ export function adjustTalent(code, { nickname, delta, reason, now = Date.now() }
   const why = String(reason ?? '').trim().slice(0, 40);
   if (!why) throw new Error('사유를 입력해 주세요.');
   const { key, member } = ensureMember(group, nickname, null, now);
-  const entry = addLedger(group, { key, nickname: member.nickname, delta: d, reason: why, kind: 'manual', now });
+  const balance = balanceOf(group, key);
+  // 잔액은 0 아래로 내려가지 않는다.
+  if (balance + d < 0) throw new Error(`${member.nickname} 친구는 지금 ${balance}달란트라서 ${-d}개를 뺄 수 없어요.`);
+  // 수동 지급은 주간 상한과 상관없이 들어간다. 이번 주 받은 양이 상한을 넘게 되면 '상한 예외'로 표시.
+  const extra = {};
+  if (d > 0) {
+    const week = isoWeekKST(now);
+    let manualPlus = 0;
+    for (const e of group.ledger) if (e.key === key && e.week === week && e.kind === 'manual' && e.delta > 0) manualPlus += e.delta;
+    if (weekAutoEarned(group, key, week) + manualPlus + d > weeklyCapOf(group)) extra.override = true;
+  }
+  const entry = addLedger(group, { key, nickname: member.nickname, delta: d, reason: why, kind: 'manual', now, ...extra });
   saveGroup(group);
   return entry;
 }
@@ -307,17 +413,27 @@ export function computeGameAwards({ players, totalQuestions, team = null }) {
 export function recordGame(code, { roomTitle, level, totalQuestions, players, team = null, mvpNicknames = [], now = Date.now() }) {
   const group = requireGroup(code);
   const gameId = randomUUID();
-  const awards = computeGameAwards({ players, totalQuestions, team });
+  const wanted = computeGameAwards({ players, totalQuestions, team });
   const byId = new Map(players.map((p) => [p.id, p]));
-  for (const award of awards) {
+  const awards = wanted.map((award) => {
     const p = byId.get(award.id);
     const { key, member } = ensureMember(group, p.nickname, p.avatar, now);
     // 게임을 했다면 그 주 출석이기도 하다 (입장 때 이미 찍혔으면 그대로).
     if (!member.attendance[isoWeekKST(now)]) member.attendance[isoWeekKST(now)] = { at: now, via: 'game' };
-    for (const part of award.parts) {
-      addLedger(group, { key, nickname: member.nickname, delta: part.delta, reason: part.reason, kind: part.kind, gameId, now });
-    }
-  }
+    // 주간 상한 안에서만 지급 (넘는 만큼은 깎임)
+    const res = grantAuto(group, key, member, award.parts, { now, gameId });
+    const delta = res.parts.reduce((sum, x) => sum + x.delta, 0);
+    return {
+      id: award.id,
+      nickname: member.nickname,
+      delta,
+      requested: award.delta,
+      capped: delta < award.delta,
+      weekRemaining: res.weekRemaining,
+      weeklyCap: res.weeklyCap,
+      parts: res.parts,
+    };
+  });
   group.games.push({
     id: gameId,
     at: now,
@@ -353,12 +469,16 @@ export function groupSummary(code, { now = Date.now(), weeksBack = 8 } = {}) {
     w = prevWeek(w);
   }
 
+  const weeklyCap = weeklyCapOf(group);
   const totals = new Map();
-  const weekTotals = new Map();
+  const weekTotals = new Map(); // 이번 주에 번 달란트 (상점 지출 제외) → 이번 주 MVP 기준
+  const weekAuto = new Map(); // 이번 주 자동 지급분 → 주간 상한 사용량
   for (const [key, m] of Object.entries(group.members)) totals.set(key, m.carried || 0);
   for (const e of group.ledger) {
     totals.set(e.key, (totals.get(e.key) || 0) + e.delta);
-    if (e.week === currentWeek) weekTotals.set(e.key, (weekTotals.get(e.key) || 0) + e.delta);
+    if (e.week !== currentWeek) continue;
+    if (e.kind !== 'shop') weekTotals.set(e.key, (weekTotals.get(e.key) || 0) + e.delta);
+    if (AUTO_KINDS.has(e.kind) && e.delta > 0) weekAuto.set(e.key, (weekAuto.get(e.key) || 0) + e.delta);
   }
 
   const members = Object.entries(group.members).map(([key, m]) => {
@@ -370,6 +490,11 @@ export function groupSummary(code, { now = Date.now(), weeksBack = 8 } = {}) {
       avatar: m.avatar || null,
       total: totals.get(key) || 0,
       weekTalents: weekTotals.get(key) || 0,
+      weekEarned: weekAuto.get(key) || 0,
+      weekRemaining: Math.max(0, weeklyCap - (weekAuto.get(key) || 0)),
+      equipped: { ...(m.equipped || {}) },
+      ownedCount: (m.owned || []).length,
+      claimed: !!m.owner, // 이 닉네임을 쓰는 기기가 정해졌는지 (기기 식별값 자체는 내보내지 않는다)
       attendedWeeks: Object.keys(m.attendance).sort(),
       attendCount: Object.keys(m.attendance).length,
       presentThisWeek: !!m.attendance[currentWeek],
@@ -396,7 +521,106 @@ export function groupSummary(code, { now = Date.now(), weeksBack = 8 } = {}) {
     ledger: group.ledger.slice(-400).reverse().map(({ key, ...rest }) => ({ key, ...rest })),
     games: group.games.slice(-30).reverse(),
     rules: TALENT_RULES,
+    settings: { weeklyCap },
   };
+}
+
+// ---------------------------------------------------------------------------
+// 닉네임 주인 (반 안에서 닉네임은 한 명만)
+// ---------------------------------------------------------------------------
+// 기기 id 는 그대로 저장하지 않고 반 코드와 섞은 해시만 남긴다.
+function ownerHash(code, deviceId) {
+  return createHash('sha256').update(`${code}:${deviceId}`).digest('hex').slice(0, 24);
+}
+
+// 이 기기가 이 닉네임을 쓸 수 있는지 확인하고, 주인이 없으면 주인으로 등록한다.
+// 다른 기기가 먼저 쓰고 있는 닉네임이면 친절한 안내와 함께 거절한다.
+export function claimNickname(code, { nickname, deviceId, avatar = null, now = Date.now() }) {
+  const group = requireGroup(code);
+  if (!deviceId) throw new Error('기기 정보를 확인할 수 없어요. 새로고침 후 다시 들어와 주세요.');
+  const display = cleanNickname(nickname);
+  const key = nickKey(display);
+  const owner = ownerHash(group.code, String(deviceId));
+  const existing = group.members[key];
+  if (existing && existing.owner && existing.owner !== owner) {
+    const err = new Error(`"${existing.nickname}"은(는) 우리 반에서 이미 다른 친구가 쓰고 있는 이름이에요. 다른 이름을 골라 주세요!`);
+    err.code = 'NICK_TAKEN';
+    throw err;
+  }
+  const { member } = ensureMember(group, display, avatar, now);
+  if (!member.owner) member.owner = owner;
+  saveGroup(group);
+  return { key, nickname: member.nickname, equipped: { ...(member.equipped || {}) } };
+}
+
+// 교사용: 폰을 바꾼 친구가 다시 같은 닉네임으로 들어올 수 있게 주인 표시를 지운다.
+export function releaseNickname(code, nickname) {
+  const group = requireGroup(code);
+  const member = group.members[nickKey(nickname)];
+  if (!member) throw new Error('그 닉네임을 찾을 수 없어요.');
+  delete member.owner;
+  saveGroup(group);
+}
+
+// ---------------------------------------------------------------------------
+// 달란트 상점 (게임 안 꾸미기 아이템)
+// ---------------------------------------------------------------------------
+function requireMember(group, key) {
+  const member = group.members[key];
+  if (!member) throw new Error('우리 반 기록에서 친구를 찾을 수 없어요.');
+  member.owned ||= [];
+  member.equipped ||= {};
+  return member;
+}
+
+export function shopState(code, key, { now = Date.now() } = {}) {
+  const group = requireGroup(code);
+  const member = requireMember(group, key);
+  const cap = weeklyCapOf(group);
+  const earned = weekAutoEarned(group, key, isoWeekKST(now));
+  return {
+    nickname: member.nickname,
+    balance: balanceOf(group, key),
+    owned: [...member.owned],
+    equipped: { ...member.equipped },
+    weeklyCap: cap,
+    weekEarned: earned,
+    weekRemaining: Math.max(0, cap - earned),
+    items: SHOP_ITEMS,
+  };
+}
+
+// 아이템 구입: 잔액이 모자라면 거절(잔액은 절대 음수가 되지 않는다),
+// 이미 가진 아이템은 다시 돈을 받지 않고 그냥 착용만 한다. 반환: { charged, state }
+export function buyItem(code, key, itemId, { now = Date.now() } = {}) {
+  const group = requireGroup(code);
+  const member = requireMember(group, key);
+  const item = getShopItem(itemId);
+  if (!item) throw new Error('상점에 없는 아이템이에요.');
+  let charged = 0;
+  if (!member.owned.includes(item.id)) {
+    const balance = balanceOf(group, key);
+    if (balance < item.price) throw new Error(`달란트가 ${item.price - balance}개 모자라요. (${item.name} ${item.price}개, 지금 ${balance}개)`);
+    addLedger(group, { key, nickname: member.nickname, delta: -item.price, reason: `상점: ${item.name} 구입`, kind: 'shop', now, itemId: item.id });
+    member.owned.push(item.id);
+    charged = item.price;
+  }
+  member.equipped[item.slot] = item.id;
+  saveGroup(group);
+  return { charged, state: shopState(code, key, { now }) };
+}
+
+// 가진 아이템 착용/해제 (무료)
+export function equipItem(code, key, itemId, equip = true, { now = Date.now() } = {}) {
+  const group = requireGroup(code);
+  const member = requireMember(group, key);
+  const item = getShopItem(itemId);
+  if (!item) throw new Error('상점에 없는 아이템이에요.');
+  if (!member.owned.includes(item.id)) throw new Error('아직 사지 않은 아이템이에요.');
+  if (equip) member.equipped[item.slot] = item.id;
+  else if (member.equipped[item.slot] === item.id) delete member.equipped[item.slot];
+  saveGroup(group);
+  return shopState(code, key, { now });
 }
 
 // 테스트용: 메모리 캐시 비우기 (파일에서 다시 읽는지 확인할 때)

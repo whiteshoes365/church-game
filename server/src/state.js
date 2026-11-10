@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { DEFAULT_LEVEL, DEFAULT_QUESTION_COUNT, normalizeLevel, selectQuizQuestions } from './questions.js';
 
 export const QUESTION_DURATION_MS = 15000;
@@ -259,11 +259,23 @@ export function listRooms(churchId) {
   return [...rooms.values()].filter((r) => r.churchId === churchId);
 }
 
-export function createRoom({ churchId, title, map, capacity, questionSeconds, level, questionCount }) {
+// 방 입장 PIN: 숫자 4자리. 호스트가 정하지 않으면 자동으로 만든다.
+// (교사용 반 기록 PIN 과는 별개 — 이건 학생들에게 불러 주는 번호)
+export function normalizeRoomPin(pin) {
+  if (pin === undefined || pin === null || pin === '') return String(randomInt(0, 10000)).padStart(4, '0');
+  const p = String(pin).trim();
+  if (!/^\d{4}$/.test(p)) throw new Error('방 PIN은 숫자 4자리로 정해 주세요.');
+  return p;
+}
+
+export function createRoom({ churchId, title, map, capacity, questionSeconds, level, questionCount, pin }) {
   const church = getChurch(churchId);
   if (!church) throw new Error('교회를 찾을 수 없어요.');
+  const roomPin = normalizeRoomPin(pin);
   const room = {
     id: randomUUID(),
+    pin: roomPin,
+    hostKey: randomUUID(), // 방을 만든 브라우저만 아는 값 (호스트 화면 다시 열 때 확인)
     churchId,
     title: (title || '방').trim(),
     map: map || 'sanctuary',
@@ -308,6 +320,8 @@ export function joinRoom(room, { deviceId, nickname, avatar }) {
       score: 0,
       connected: true,
       teamId: null,
+      recordKey: null, // 반 기록에 연결된 닉네임 키 (닉네임 주인 확인을 통과한 경우만)
+      cosmetics: {}, // 상점에서 사서 착용한 아이템 { hat, outfit, extra }
       motion: createMotion(),
     };
     room.players.set(deviceId, player);
@@ -405,10 +419,12 @@ export function revealAnswer(room) {
   };
 }
 
-export function serializeRoom(room) {
+// forHost: true 일 때만 방 PIN 을 담는다 (학생 쪽 스냅샷에는 넣지 않는다).
+export function serializeRoom(room, { forHost = false } = {}) {
   const q = currentQuestion(room);
   return {
     id: room.id,
+    ...(forHost ? { pin: room.pin } : {}),
     churchId: room.churchId,
     title: room.title,
     map: room.map,
@@ -423,6 +439,8 @@ export function serializeRoom(room) {
       score: p.score,
       connected: p.connected,
       teamId: room.team.enabled ? p.teamId : null,
+      cosmetics: p.cosmetics || {},
+      recorded: !!p.recordKey,
     })),
     groupCode: room.groupCode,
     team: serializeTeam(room),

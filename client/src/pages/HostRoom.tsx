@@ -7,6 +7,7 @@ import { isWebGLAvailable } from '../three/webgl';
 import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
 import type { ResultColumn } from '../three/ResultCanvas3D';
 import { loadGroupSession, normalizeGroupCode, saveGroupSession } from '../groupSession';
+import { getHostKey } from '../hostKeys';
 import { LEVEL_CLASS, LEVEL_LABELS } from '../levels';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 
@@ -28,7 +29,7 @@ function buildResultColumns(room: RoomSnapshot): ResultColumn[] {
         color: t.color,
         height: Math.max(1, 3 - place),
         winner: final.team!.winnerTeamIds.includes(t.id),
-        members: room.players.filter((p) => p.teamId === t.id).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar })),
+        members: room.players.filter((p) => p.teamId === t.id).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, cosmetics: p.cosmetics })),
       };
     });
     return cols;
@@ -39,7 +40,7 @@ function buildResultColumns(room: RoomSnapshot): ResultColumn[] {
     color: RANK_COLORS[i],
     height: 3 - i,
     winner: i === 0 && score > 0,
-    members: room.players.filter((p) => p.score === score).slice(0, 12).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar })),
+    members: room.players.filter((p) => p.score === score).slice(0, 12).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, cosmetics: p.cosmetics })),
   }));
   // 시상대처럼 2등 - 1등 - 3등 순서로 세운다.
   if (cols.length >= 2) return [cols[1], cols[0], ...cols.slice(2)];
@@ -78,11 +79,16 @@ export function HostRoom() {
   const [now, setNow] = useState(() => Date.now());
   const [linkCode, setLinkCode] = useState(() => loadGroupSession()?.code ?? '');
   const [linkPin, setLinkPin] = useState(() => loadGroupSession()?.pin ?? '');
+  const [needHostPin, setNeedHostPin] = useState<string | null>(null);
+  const [hostPin, setHostPin] = useState('');
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
   useEffect(() => {
     gameSocket.connect();
-    gameSocket.send('hostOpenRoom', { roomId });
+    gameSocket.send('hostOpenRoom', { roomId, hostKey: roomId ? getHostKey(roomId) : undefined });
+    const offAuth = gameSocket.on('hostAuthRequired', (msg) => {
+      if (msg.roomId === roomId) setNeedHostPin(msg.message);
+    });
     const offState = gameSocket.on('roomState', (msg) => {
       if (msg.room.id === roomId) setRoom(msg.room);
     });
@@ -102,6 +108,7 @@ export function HostRoom() {
       offState();
       offError();
       offPositions();
+      offAuth();
     };
   }, [roomId]);
 
@@ -113,8 +120,32 @@ export function HostRoom() {
 
   if (!room) {
     return (
-      <div className="host-screen">
-        <p className="subtitle">{error ?? '방 정보를 불러오는 중이에요...'}</p>
+      <div className="screen">
+        <div className="screen-narrow stack">
+          {needHostPin ? (
+            <div className="card stack">
+              <h2 className="card-title">호스트 확인</h2>
+              <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>{needHostPin}</p>
+              <input
+                className="input pin-input"
+                inputMode="numeric"
+                placeholder="0000"
+                maxLength={4}
+                value={hostPin}
+                onChange={(e) => setHostPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              />
+              <button className="btn btn-primary" disabled={hostPin.length !== 4} onClick={() => gameSocket.send('hostOpenRoom', { roomId, pin: hostPin })}>
+                호스트 화면 열기
+              </button>
+            </div>
+          ) : (
+            <p className="subtitle">{error ?? '방 정보를 불러오는 중이에요...'}</p>
+          )}
+          {needHostPin && error && <p className="form-error">{error}</p>}
+          <button className="link-btn" onClick={() => navigate('/host')}>
+            호스트 홈으로
+          </button>
+        </div>
       </div>
     );
   }
@@ -159,6 +190,7 @@ export function HostRoom() {
             <span className={`badge badge-level ${LEVEL_CLASS[room.level]}`}>{LEVEL_LABELS[room.level]}</span>
             {team && <span className="badge badge-team">팀 대결</span>}
             {room.groupCode && <span className="badge badge-group">{room.groupCode} 반 기록 중</span>}
+            {room.pin && room.status !== 'lobby' && <span className="badge badge-pin">입장 PIN {room.pin}</span>}
           </p>
         </div>
         <div className="row">
@@ -254,35 +286,44 @@ export function HostRoom() {
             )}
           </div>
 
+          {room.status === 'lobby' && room.pin && (
+            <div className="pin-board">
+              <span className="pin-board-label">
+                방 입장 PIN
+                <small>친구들에게 이 숫자를 알려 주세요</small>
+              </span>
+              <span className="pin-digits">
+                {room.pin.split('').map((d, i) => (
+                  <span key={i} className="pin-digit">
+                    {d}
+                  </span>
+                ))}
+              </span>
+            </div>
+          )}
+
+          {final && final.team && (
+            <div className="result-teams">
+              {final.team.teams.map((t) => {
+                const won = final.team!.winnerTeamIds.includes(t.id);
+                return (
+                  <div key={t.id} className={`result-team-card ${won ? 'win' : 'lose'}`} style={{ borderColor: t.color }}>
+                    <span className={`result-tag ${won ? 'win' : 'lose'}`}>{won ? (final.team!.tie ? '무승부' : '이긴 팀') : '진 팀'}</span>
+                    <span className="result-team-title">
+                      <span className="team-dot" style={{ background: t.color }} />
+                      {t.name}
+                    </span>
+                    <span className="result-team-score">
+                      평균 {t.average}점 <small>합계 {t.total}점 · {t.size}명</small>
+                    </span>
+                    {!won && <span className="result-cheer">아쉽지만 잘했어요!</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="map-area-3d">
-            {final && final.team && (
-              <div className="result-teams">
-                {final.team.teams.map((t) => {
-                  const won = final.team!.winnerTeamIds.includes(t.id);
-                  return (
-                    <div key={t.id} className={`result-team-card ${won ? 'win' : 'lose'}`} style={{ borderColor: t.color }}>
-                      <span className={`result-tag ${won ? 'win' : 'lose'}`}>{won ? (final.team!.tie ? '무승부' : '이긴 팀') : '진 팀'}</span>
-                      <span className="result-team-title">
-                        <span className="team-dot" style={{ background: t.color }} />
-                        {t.name}
-                      </span>
-                      <span className="result-team-score">
-                        평균 {t.average}점 <small>합계 {t.total}점 · {t.size}명</small>
-                      </span>
-                      {!won && <span className="result-cheer">아쉽지만 잘했어요! 다음엔 이기자!</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {final && !final.team && mvpNames.length > 0 && (
-              <div className="result-teams">
-                <div className="result-team-card win" style={{ borderColor: '#f5c518' }}>
-                  <span className="result-tag win">오늘의 MVP</span>
-                  <span className="result-team-title">{mvpNames.join(' · ')}</span>
-                </div>
-              </div>
-            )}
             {final && webglAvailable ? (
               <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
                 <div className="canvas-fill">
@@ -434,7 +475,13 @@ export function HostRoom() {
                     {final?.mvpIds.includes(p.id) && <span className="mvp-chip">MVP</span>}
                   </span>
                   <span>
-                    {p.score}점{award && <span className="award-chip">+{award.delta}</span>}
+                    {p.score}점
+                    {award && (
+                      <span className={`award-chip ${award.capped ? 'capped' : ''}`} title={award.capped ? `주간 상한으로 ${award.requested}개 중 ${award.delta}개만 지급` : undefined}>
+                        +{award.delta}
+                        {award.capped && ' 상한'}
+                      </span>
+                    )}
                   </span>
                 </div>
               );

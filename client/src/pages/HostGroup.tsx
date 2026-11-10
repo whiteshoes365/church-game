@@ -20,6 +20,7 @@ const KIND_LABEL: Record<LedgerEntry['kind'], string> = {
   team: '팀 대결',
   streak: '연속 출석',
   manual: '선생님',
+  shop: '상점',
 };
 
 function formatWhen(at: number): string {
@@ -153,6 +154,11 @@ export function HostGroup() {
     setReason('');
   }
 
+  function changeCap(next: number) {
+    const cap = Math.max(group!.rules.weeklyCapMin, Math.min(group!.rules.weeklyCapMax, next));
+    if (cap !== group!.settings.weeklyCap) gameSocket.send('groupSettings', { code, weeklyCap: cap });
+  }
+
   function addAttendance() {
     if (!newNick.trim()) return;
     gameSocket.send('groupMarkAttendance', { code, nickname: newNick.trim() });
@@ -211,7 +217,7 @@ export function HostGroup() {
               {present.length === 0 && <p className="subtitle">아직 이번 주에 출석한 친구가 없어요.</p>}
               {present.map((m) => (
                 <div key={m.key} className="attend-card">
-                  <AvatarIcon avatarId={m.avatar ?? DEFAULT_AVATAR_ID} size={44} />
+                  <AvatarIcon avatarId={m.avatar ?? DEFAULT_AVATAR_ID} cosmetics={m.equipped} size={44} />
                   <div className="attend-card-name">{m.nickname}</div>
                   <StreakBadge member={m} />
                 </div>
@@ -296,6 +302,29 @@ export function HostGroup() {
               <h2 className="panel-title">달란트 순위 (누적)</h2>
               <span className="panel-note">이름을 누르면 내역을 볼 수 있어요</span>
             </div>
+            <div className="cap-setting">
+              <span className="cap-setting-label">
+                <b>주간 상한</b>
+                <small>
+                  한 친구가 한 주에 자동으로 받을 수 있는 최대 달란트 ({group.rules.weeklyCapMin}~{group.rules.weeklyCapMax}, 기본 {group.rules.weeklyCapDefault})
+                </small>
+              </span>
+              <div className="stepper stepper-lg">
+                <button type="button" onClick={() => changeCap(group.settings.weeklyCap - 5)}>
+                  -5
+                </button>
+                <button type="button" onClick={() => changeCap(group.settings.weeklyCap - 1)}>
+                  -
+                </button>
+                <span className="cap-value">{group.settings.weeklyCap}</span>
+                <button type="button" onClick={() => changeCap(group.settings.weeklyCap + 1)}>
+                  +
+                </button>
+                <button type="button" onClick={() => changeCap(group.settings.weeklyCap + 5)}>
+                  +5
+                </button>
+              </div>
+            </div>
             <div className="leader-list">
               {group.members.length === 0 && <p className="subtitle">아직 기록된 친구가 없어요.</p>}
               {group.members.map((m, i) => {
@@ -309,12 +338,20 @@ export function HostGroup() {
                     data-index={i}
                   >
                     <span className="leader-rank">{rank}</span>
-                    <AvatarIcon avatarId={m.avatar ?? DEFAULT_AVATAR_ID} size={34} />
+                    <AvatarIcon avatarId={m.avatar ?? DEFAULT_AVATAR_ID} cosmetics={m.equipped} size={34} />
                     <span className="leader-name">
                       {m.nickname}
                       <StreakBadge member={m} />
                     </span>
-                    {m.weekTalents !== 0 && <span className="leader-week">이번 주 {signed(m.weekTalents)}</span>}
+                    <span className={`leader-cap ${m.weekRemaining === 0 ? 'full' : ''}`} title="이번 주 자동 지급 / 주간 상한">
+                      <span className="leader-cap-text">
+                        {m.weekRemaining === 0 ? '상한 도달 ' : '이번 주 '}
+                        {m.weekEarned}/{group.settings.weeklyCap}
+                      </span>
+                      <span className="cap-bar">
+                        <span className="cap-bar-fill" style={{ width: `${Math.min(100, (m.weekEarned / group.settings.weeklyCap) * 100)}%` }} />
+                      </span>
+                    </span>
                     <span className="leader-total">
                       <span className="talent-coin" aria-hidden />
                       {m.total}
@@ -370,22 +407,41 @@ export function HostGroup() {
                     -{delta} 빼기
                   </button>
                 </div>
+                <p className="fine-print">
+                  선생님이 직접 주는 달란트는 주간 상한과 상관없이 들어가요(장부에 '상한 예외'로 표시). 잔액은 0 아래로 내려가지 않아요. 이번 주 자동 지급{' '}
+                  {selectedMember.weekEarned}/{group.settings.weeklyCap}
+                  {selectedMember.claimed && (
+                    <>
+                      {' · '}
+                      <button
+                        type="button"
+                        className="link-btn inline-link"
+                        title="폰을 바꾼 친구가 같은 닉네임으로 다시 들어올 수 있게 해요"
+                        onClick={() => gameSocket.send('groupReleaseNickname', { code, nickname: selectedMember.nickname })}
+                      >
+                        닉네임 기기 연결 풀기
+                      </button>
+                    </>
+                  )}
+                </p>
               </div>
             ) : (
               <p className="panel-note rules-note">
                 자동 지급: 참가 +{group.rules.participation} · 1/2/3등 +{group.rules.rank.join('/+')} · 만점 +{group.rules.perfect} · 연속 출석{' '}
-                {group.rules.streakWeeks}주 이상 +{group.rules.streakBonus} · 팀 승리 보너스
+                {group.rules.streakWeeks}주 이상 +{group.rules.streakBonus} · 팀 승리 보너스 · 한 주 최대 {group.settings.weeklyCap}개(넘으면 깎여요)
               </p>
             )}
 
             <div className="ledger-list">
               {history.length === 0 && <p className="subtitle">아직 내역이 없어요.</p>}
               {history.map((e) => (
-                <div key={e.id} className="ledger-row">
-                  <span className={`ledger-delta ${e.delta >= 0 ? 'plus' : 'minus'}`}>{signed(e.delta)}</span>
+                <div key={e.id} className={`ledger-row ${e.capped ? 'capped' : ''}`}>
+                  <span className={`ledger-delta ${e.delta > 0 ? 'plus' : e.delta < 0 ? 'minus' : 'zero'}`}>{signed(e.delta)}</span>
                   <span className="ledger-main">
                     {!selectedMember && <b>{e.nickname}</b>} {e.reason}
                   </span>
+                  {e.capped && <span className="ledger-kind kind-capped">상한{e.requested !== undefined ? ` ${e.requested}→${e.delta}` : ''}</span>}
+                  {e.override && <span className="ledger-kind kind-override">상한 예외</span>}
                   <span className={`ledger-kind kind-${e.kind}`}>{KIND_LABEL[e.kind]}</span>
                   <span className="ledger-when">
                     {weekShort(e.week)} · {formatWhen(e.at)}

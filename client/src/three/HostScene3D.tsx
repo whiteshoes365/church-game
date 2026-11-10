@@ -77,6 +77,9 @@ export function HostScene3D({ players, status, correctAnswer, positions, zones =
           <VoxelCharacter
             key={p.id}
             avatarId={p.avatar}
+            cosmetics={p.cosmetics}
+            labelSmall={status === 'lobby' && players.length > 5}
+            labelLift={status === 'lobby' ? (index % 3) * 0.55 : 0}
             nickname={p.nickname}
             target={[x, y, z]}
             moveState={pos?.state}

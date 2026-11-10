@@ -12,6 +12,34 @@ export interface PlayerSnapshot {
   score: number;
   connected: boolean;
   teamId?: string | null;
+  cosmetics?: Cosmetics;
+  recorded?: boolean;
+}
+
+// 상점에서 사서 착용한 꾸미기 아이템 (슬롯별 아이템 id)
+export interface Cosmetics {
+  hat?: string;
+  outfit?: string;
+  extra?: string;
+}
+
+export interface ShopItem {
+  id: string;
+  slot: 'hat' | 'outfit' | 'extra';
+  name: string;
+  price: number;
+  desc: string;
+}
+
+export interface ShopState {
+  nickname: string;
+  balance: number;
+  owned: string[];
+  equipped: Cosmetics;
+  weeklyCap: number;
+  weekEarned: number;
+  weekRemaining: number;
+  items: ShopItem[];
 }
 
 export interface TeamStanding {
@@ -30,16 +58,24 @@ export interface TeamState {
   teams: TeamStanding[];
 }
 
+export type LedgerKind = 'game' | 'team' | 'streak' | 'manual' | 'shop';
+
 export interface AwardPart {
   delta: number;
   reason: string;
-  kind: 'game' | 'team' | 'streak' | 'manual';
+  kind: LedgerKind;
+  requested?: number;
+  capped?: boolean;
 }
 
 export interface GameAward {
   id: string;
   nickname: string;
   delta: number;
+  requested?: number;
+  capped?: boolean; // 주간 상한 때문에 깎였는지
+  weekRemaining?: number;
+  weeklyCap?: number;
   parts: AwardPart[];
 }
 
@@ -68,6 +104,11 @@ export interface GroupMember {
   presentThisWeek: boolean;
   streak: number;
   badge: { id: string; label: string } | null;
+  weekEarned: number;
+  weekRemaining: number;
+  equipped: Cosmetics;
+  ownedCount: number;
+  claimed: boolean;
 }
 
 export interface LedgerEntry {
@@ -78,8 +119,12 @@ export interface LedgerEntry {
   nickname: string;
   delta: number;
   reason: string;
-  kind: 'game' | 'team' | 'streak' | 'manual';
+  kind: LedgerKind;
   gameId: string | null;
+  requested?: number;
+  capped?: boolean; // 주간 상한으로 깎여서 지급됨
+  override?: boolean; // 교사 수동 지급이 주간 상한을 넘김 (상한 예외)
+  itemId?: string;
 }
 
 export interface GameRecord {
@@ -111,7 +156,11 @@ export interface GroupData {
     streakBonus: number;
     teamBonusMax: number;
     manualMax: number;
+    weeklyCapDefault: number;
+    weeklyCapMin: number;
+    weeklyCapMax: number;
   };
+  settings: { weeklyCap: number };
 }
 
 export interface QuestionSnapshot {
@@ -154,6 +203,7 @@ export interface PlayerPosition {
 
 export interface RoomSnapshot {
   id: string;
+  pin?: string; // 호스트에게만 내려오는 방 입장 PIN
   churchId: string;
   title: string;
   map: MapTheme;

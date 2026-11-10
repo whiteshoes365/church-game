@@ -16,6 +16,7 @@ const ALL_QUESTIONS = Object.values(QUESTIONS_BY_LEVEL).flat();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const PORT = 8799;
+const TEST_ROOM_PIN = '4321'; // 기존 검사들이 쓰는 방 입장 PIN
 const REMOTE = process.env.VERIFY_WS_URL;
 const WS_URL = REMOTE || `ws://localhost:${PORT}`;
 const DEFAULT_WAIT_TIMEOUT_MS = REMOTE ? 10000 : 4000;
@@ -294,8 +295,117 @@ function verifyRecordsUnit() {
   log('records unit checks ok (KST week, attendance, streak badge/bonus, award rules, manual adjust, atomic file persistence)');
 }
 
+
+// 규칙 단위 검증: 닉네임 중복 불가, 주간 상한, 수동 상한 예외, 잔액 음수 불가, 상점
+function verifyRulesUnit() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'church-records-rules-'));
+  process.env.RECORDS_DIR = dir;
+  records._clearCache();
+  const at = (iso) => Date.parse(iso);
+  const t0 = at('2026-11-10T11:00:00+09:00'); // 2026-W46 (화)
+  const throws = (fn, pattern) => {
+    try { fn(); } catch (e) { return pattern ? pattern.test(e.message) : true; }
+    return false;
+  };
+
+  // --- 1) 닉네임: 반 안에서 먼저 등록한 기기가 주인 ---
+  assert(records.nickKey(' 블록 왕 ') === records.nickKey('블록왕'), '닉네임 비교는 공백을 무시');
+  assert(records.nickKey('ＡＢc') === records.nickKey('abC'), '닉네임 비교는 전각/대소문자를 무시');
+  records.openGroup('가반', '1111', { create: true });
+  records.openGroup('나반', '2222', { create: true });
+  const first = records.claimNickname('가반', { nickname: '블록왕', deviceId: 'dev-A', now: t0 });
+  assert(first.key === records.nickKey('블록왕'), '첫 등록 성공');
+  assert(throws(() => records.claimNickname('가반', { nickname: ' 블록 왕', deviceId: 'dev-B', now: t0 }), /이미 다른 친구.*다른 이름/), '같은 반에서 다른 기기가 같은 닉네임(공백만 다름)을 쓰면 친절한 오류');
+  assert(records.claimNickname('가반', { nickname: '블록왕', deviceId: 'dev-A', now: t0 }).key === first.key, '주인 기기는 다시 들어올 수 있음');
+  assert(records.claimNickname('나반', { nickname: '블록왕', deviceId: 'dev-B', now: t0 }).key === first.key, '다른 반에서는 같은 닉네임을 쓸 수 있음');
+  assert(records.claimNickname('가반', { nickname: '다른이름', deviceId: 'dev-B', now: t0 }).key, '다른 닉네임으로는 들어올 수 있음');
+  assert(throws(() => records.claimNickname('가반', { nickname: '블록왕', deviceId: '', now: t0 })), '기기 정보 없이는 등록 불가');
+  records.releaseNickname('가반', '블록왕');
+  assert(records.claimNickname('가반', { nickname: '블록왕', deviceId: 'dev-C', now: t0 }).key, '교사가 연결을 풀면 새 기기가 쓸 수 있음');
+  assert(throws(() => records.claimNickname('가반', { nickname: '블록왕', deviceId: 'dev-A', now: t0 }), /다른 이름/), '풀린 뒤에는 새 주인이 우선');
+  const rawA = fs.readFileSync(path.join(dir, '가반.json'), 'utf8');
+  assert(!rawA.includes('dev-A') && !rawA.includes('dev-C'), '기기 id 원문은 파일에 저장하지 않음(해시만)');
+  assert(!JSON.stringify(records.groupSummary('가반', { now: t0 })).includes(JSON.parse(rawA).members[first.key].owner), '요약에 기기 해시가 나가면 안 됨');
+
+  // --- 2) 출석은 입장 순간 (게임과 무관), 같은 주 두 번 들어와도 1회 ---
+  const att1 = records.markAttendance('가반', { nickname: '블록왕', now: t0 });
+  const att2 = records.markAttendance('가반', { nickname: '블록왕', now: t0 + 3 * 86400000 }); // 같은 주 금요일
+  let sum = records.groupSummary('가반', { now: t0 });
+  let king = sum.members.find((m) => m.nickname === '블록왕');
+  assert(att1.newlyMarked && !att2.newlyMarked && king.presentThisWeek && king.attendCount === 1 && sum.games.length === 0, '게임 없이 입장만으로 출석, 같은 주는 1회');
+
+  // --- 3) 주간 상한 ---
+  assert(sum.settings.weeklyCap === 20 && records.TALENT_RULES.weeklyCapDefault === 20, '주간 상한 기본값은 20');
+  assert(throws(() => records.setWeeklyCap('가반', 0), /1~100/) && throws(() => records.setWeeklyCap('가반', 101), /1~100/) && throws(() => records.setWeeklyCap('가반', 'abc')), '상한 범위(1~100) 밖은 거부');
+  assert(records.setWeeklyCap('가반', 5) === 5, '교사가 상한 변경');
+  const game = (now) => records.recordGame('가반', { roomTitle: '단위', level: 'elementary', totalQuestions: 5, now, players: [{ id: 'k', nickname: '블록왕', score: 5, teamId: null }] });
+  // 참가1 + 1등3 + 만점2 = 6 → 상한 5라서 5만 지급 (만점 2 중 1만)
+  const g1 = game(t0).awards[0];
+  assert(g1.requested === 6 && g1.delta === 5 && g1.capped === true && g1.weekRemaining === 0, `상한으로 깎여야 함: ${JSON.stringify(g1)}`);
+  assert(g1.parts.map((x) => x.delta).join() === '1,3,1' && g1.parts[2].capped && g1.parts[2].requested === 2, '어느 항목이 깎였는지 표시');
+  // 같은 주 두 번째 판 → 0개, 장부에는 0달란트 한 줄로 이유가 남음
+  const g2 = game(t0 + 3600000).awards[0];
+  assert(g2.delta === 0 && g2.capped && g2.parts.every((x) => x.delta === 0), '상한 도달 후에는 지급 없음');
+  sum = records.groupSummary('가반', { now: t0 });
+  king = sum.members.find((m) => m.nickname === '블록왕');
+  assert(king.total === 5 && king.weekEarned === 5 && king.weekRemaining === 0, `상한 사용량: ${JSON.stringify(king)}`);
+  const kingLedger = () => records.groupSummary('가반', { now: t0 }).ledger.filter((e) => e.nickname === '블록왕');
+  assert(kingLedger().some((e) => e.capped && e.delta === 1 && e.requested === 2 && /주간 상한으로 1개만 지급/.test(e.reason)), '장부에 "상한으로 n개만 지급"');
+  assert(kingLedger().some((e) => e.capped && e.delta === 0 && /주간 상한 5개 도달 · 지급 없음/.test(e.reason) && e.requested === 6), '장부에 "상한 도달 · 지급 없음"');
+  // 다음 주에는 상한이 새로 시작
+  const g3 = game(t0 + 7 * 86400000).awards[0];
+  assert(g3.delta === 5 && g3.weekRemaining === 0, '다음 주(KST)에는 다시 받을 수 있음');
+
+  // --- 수동 조정은 상한을 넘을 수 있고(상한 예외 표시), 잔액은 음수가 안 됨 ---
+  const over = records.adjustTalent('가반', { nickname: '블록왕', delta: 10, reason: '성경 암송 대회', now: t0 });
+  assert(over.delta === 10 && over.override === true && over.kind === 'manual', '상한을 넘는 수동 지급은 override 로 기록');
+  const small = records.adjustTalent('나반', { nickname: '블록왕', delta: 3, reason: '칭찬', now: t0 });
+  assert(small.override === undefined, '상한 안의 수동 지급은 예외 표시 없음');
+  const bal = () => records.shopState('가반', first.key, { now: t0 }).balance;
+  assert(bal() === 20, `잔액 5+5+10 = 20: ${bal()}`);
+  assert(throws(() => records.adjustTalent('가반', { nickname: '블록왕', delta: -21, reason: '실수', now: t0 }), /뺄 수 없어요/) && bal() === 20, '수동 차감도 잔액 아래로는 불가');
+  records.adjustTalent('가반', { nickname: '블록왕', delta: -5, reason: '정정', now: t0 });
+  assert(bal() === 15, '잔액 범위 안의 차감은 가능');
+
+  // --- 5) 상점 ---
+  let st = records.shopState('가반', first.key, { now: t0 });
+  assert(st.items.length >= 8 && st.items.every((i) => i.price >= 1 && i.price <= 20 && ['hat', 'outfit', 'extra'].includes(i.slot)), '카탈로그: 가격은 주간 상한(20) 이내');
+  assert(st.owned.length === 0 && Object.keys(st.equipped).length === 0, '처음엔 아무것도 없음');
+  let buy = records.buyItem('가반', first.key, 'hat-melon', { now: t0 });
+  assert(buy.charged === 7 && buy.state.balance === 8 && buy.state.owned.includes('hat-melon') && buy.state.equipped.hat === 'hat-melon', '구입하면 차감 + 보유 + 자동 착용');
+  buy = records.buyItem('가반', first.key, 'hat-melon', { now: t0 });
+  assert(buy.charged === 0 && buy.state.balance === 8, '이미 가진 아이템은 다시 돈을 받지 않음');
+  assert(throws(() => records.buyItem('가반', first.key, 'outfit-gold', { now: t0 }), /12개 모자라요/) && bal() === 8, '잔액이 모자라면 구입 불가(잔액 그대로)');
+  assert(throws(() => records.buyItem('가반', first.key, 'no-such-item', { now: t0 }), /없는 아이템/), '없는 아이템');
+  assert(throws(() => records.equipItem('가반', first.key, 'extra-pet', true), /사지 않은/), '안 산 아이템은 착용 불가');
+  st = records.equipItem('가반', first.key, 'hat-melon', false);
+  assert(st.equipped.hat === undefined && st.owned.includes('hat-melon') && st.balance === 8, '벗어도 보유는 유지, 무료');
+  st = records.equipItem('가반', first.key, 'hat-melon', true);
+  assert(st.equipped.hat === 'hat-melon', '다시 착용');
+  buy = records.buyItem('가반', first.key, 'extra-cape', { now: t0 });
+  assert(buy.charged === 8 && buy.state.balance === 0 && buy.state.equipped.extra === 'extra-cape' && buy.state.equipped.hat === 'hat-melon', '슬롯별로 따로 착용, 잔액 0까지 사용');
+  assert(throws(() => records.buyItem('가반', first.key, 'hat-sprout', { now: t0 }), /모자라요/) && bal() === 0, '잔액 0에서는 구입 불가 (음수 안 됨)');
+  assert(throws(() => records.adjustTalent('가반', { nickname: '블록왕', delta: -1, reason: '실수', now: t0 })), '잔액 0에서 수동 차감 불가');
+  sum = records.groupSummary('가반', { now: t0 });
+  king = sum.members.find((m) => m.nickname === '블록왕');
+  const spends = sum.ledger.filter((e) => e.kind === 'shop');
+  assert(spends.length === 2 && spends.every((e) => e.delta < 0) && spends.some((e) => e.delta === -7 && e.reason.includes('수박 헬멧') && e.itemId === 'hat-melon'), '구입은 장부에 지출(음수)로 기록, 중복 차감 없음');
+  assert(king.total === 0 && king.equipped.hat === 'hat-melon' && king.ownedCount === 2, '요약에 잔액/착용 반영');
+  assert(king.weekEarned === 5 && king.weekTalents === 5 + 10 - 5, '상점 지출은 주간 상한·이번 주 번 달란트 계산에 영향 없음');
+  // 재시작해도 보유/착용/상한 설정 유지
+  records._clearCache();
+  st = records.shopState('가반', first.key, { now: t0 });
+  assert(st.owned.length === 2 && st.equipped.extra === 'extra-cape' && st.weeklyCap === 5 && st.balance === 0, '파일에서 다시 읽어도 유지');
+
+  delete process.env.RECORDS_DIR;
+  records._clearCache();
+  fs.rmSync(dir, { recursive: true, force: true });
+  log('rule unit checks ok (unique nickname, attendance-on-enter, weekly cap trim, manual override, no negative balance, shop buy/equip/no double charge)');
+}
+
 async function main() {
   verifyRecordsUnit();
+  verifyRulesUnit();
   log(`starting server on port ${PORT}...`);
   const server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(ROOT, 'server'),
@@ -349,7 +459,7 @@ async function main() {
     assert(churchAgain.church.id === churchId, '같은 이름으로 다시 찾으면 같은 교회 id를 반환해야 함');
 
     // 2. 방 만들기 (host)
-    host.send('createRoom', { churchId, title: '검증방', map: 'sanctuary', capacity: 4 });
+    host.send('createRoom', { pin: TEST_ROOM_PIN, churchId, title: '검증방', map: 'sanctuary', capacity: 4 });
     const roomCreated = await host.waitFor('roomCreated');
     const roomId = roomCreated.room.id;
     assert(roomCreated.room.capacity === 4, '방 정원이 요청한 값(4)과 같아야 함');
@@ -368,7 +478,7 @@ async function main() {
       { client: p3, deviceId: 'device-p3', nickname: '다람쥐', avatar: 'square-green' },
     ];
     for (const p of players) {
-      p.client.send('joinRoom', { roomId, deviceId: p.deviceId, nickname: p.nickname, avatar: p.avatar });
+      p.client.send('joinRoom', { pin: TEST_ROOM_PIN, roomId, deviceId: p.deviceId, nickname: p.nickname, avatar: p.avatar });
       const joined = await p.client.waitFor('joined');
       assert(joined.playerId === p.deviceId, '입장한 플레이어 id가 deviceId와 같아야 함');
       assert(joined.room.players.length >= 1, '방에 플레이어가 있어야 함');
@@ -445,7 +555,7 @@ async function main() {
     const church2 = await host2.waitFor('churchJoined');
     const church2Id = church2.church.id;
 
-    host2.send('createRoom', {
+    host2.send('createRoom', { pin: TEST_ROOM_PIN,
       churchId: church2Id,
       title: '이동검증방',
       map: 'playground',
@@ -464,7 +574,7 @@ async function main() {
       { client: m3, deviceId: 'device-m3', nickname: '이동3' },
     ];
     for (const p of movementPlayers) {
-      p.client.send('joinRoom', { roomId: roomId2, deviceId: p.deviceId, nickname: p.nickname, avatar: 'circle-blue' });
+      p.client.send('joinRoom', { pin: TEST_ROOM_PIN, roomId: roomId2, deviceId: p.deviceId, nickname: p.nickname, avatar: 'circle-blue' });
       await p.client.waitFor('joined');
     }
     await host2.waitFor('roomState', (msg) => msg.room.players.length === 3);
@@ -573,7 +683,7 @@ async function main() {
     const church3Id = church3.church.id;
 
     // 6a. level을 지정하지 않으면 기본값은 'elementary'여야 함
-    host3.send('createRoom', { churchId: church3Id, title: '기본난이도방', map: 'sanctuary', capacity: 4 });
+    host3.send('createRoom', { pin: TEST_ROOM_PIN, churchId: church3Id, title: '기본난이도방', map: 'sanctuary', capacity: 4 });
     const defaultRoom = await host3.waitFor('roomCreated');
     assert(defaultRoom.room.level === 'elementary', `level을 지정하지 않으면 기본값 'elementary'여야 하는데 '${defaultRoom.room.level}'`);
     assert(defaultRoom.room.level === DEFAULT_LEVEL, 'questions.js의 DEFAULT_LEVEL과 일치해야 함');
@@ -585,7 +695,7 @@ async function main() {
     assert(defaultSummary && defaultSummary.level === 'elementary', '방 목록 요약(summary)에도 level이 포함되어야 함');
 
     // 6b. 유효하지 않은 level은 기본값(elementary)으로 대체되어야 함 (에러 없이)
-    host3.send('createRoom', { churchId: church3Id, title: '이상한난이도방', map: 'sanctuary', capacity: 4, level: 'not-a-real-level' });
+    host3.send('createRoom', { pin: TEST_ROOM_PIN, churchId: church3Id, title: '이상한난이도방', map: 'sanctuary', capacity: 4, level: 'not-a-real-level' });
     const invalidLevelRoom = await host3.waitFor('roomCreated');
     assert(invalidLevelRoom.room.level === DEFAULT_LEVEL, `잘못된 level은 '${DEFAULT_LEVEL}'로 대체되어야 하는데 '${invalidLevelRoom.room.level}'`);
     log('invalid level falls back to elementary ok');
@@ -593,7 +703,7 @@ async function main() {
     // 6c. 각 level로 방을 만들면 그 level이 snapshot과 방 목록에 그대로 반영되어야 함
     const levelRoomIds = {};
     for (const level of LEVELS) {
-      host3.send('createRoom', { churchId: church3Id, title: `${level}방`, map: 'sanctuary', capacity: 'unlimited', level });
+      host3.send('createRoom', { pin: TEST_ROOM_PIN, churchId: church3Id, title: `${level}방`, map: 'sanctuary', capacity: 'unlimited', level });
       const created = await host3.waitFor('roomCreated', (msg) => msg.room.title === `${level}방`);
       assert(created.room.level === level, `createRoom({level:'${level}'})의 결과 room.level은 '${level}'이어야 하는데 '${created.room.level}'`);
       levelRoomIds[level] = created.room.id;
@@ -609,7 +719,7 @@ async function main() {
 
     // 6d. 퀴즈에 출제되는 문제가 실제로 선택한 level의 문제 세트에서만 나와야 함
     // (middle, youth 두 레벨을 샘플로 짧게 퀴즈를 돌려 확인)
-    lp.send('joinRoom', { roomId: levelRoomIds.middle, deviceId: 'device-level-player', nickname: '레벨확인' });
+    lp.send('joinRoom', { pin: TEST_ROOM_PIN, roomId: levelRoomIds.middle, deviceId: 'device-level-player', nickname: '레벨확인' });
     await lp.waitFor('joined');
     await host3.waitFor('roomState', (msg) => msg.room.id === levelRoomIds.middle && msg.room.players.length === 1);
 
@@ -620,7 +730,7 @@ async function main() {
         LEVELS.filter((l) => l !== level).flatMap((l) => QUESTIONS_BY_LEVEL[l].map((q) => q.text)),
       );
       if (level !== 'middle') {
-        lp.send('joinRoom', { roomId, deviceId: 'device-level-player', nickname: '레벨확인' });
+        lp.send('joinRoom', { pin: TEST_ROOM_PIN, roomId, deviceId: 'device-level-player', nickname: '레벨확인' });
         await lp.waitFor('joined');
         await host3.waitFor('roomState', (msg) => msg.room.id === roomId && msg.room.players.length === 1);
       }
@@ -673,7 +783,7 @@ async function main() {
     // 7a. 기본(30문제) 게임: 카테고리가 모두 채워져 있고, 뱅크에 넌센스가 있으면 비율이
     // 대략 90/10에 맞고 없으면 전부 성경이어야 하며, 뱅크가 요청한 수보다 작으면 에러 없이
     // 뱅크 전체를 그대로(중복 없이) 다 써야 함. 모두 선택한 level 소속이어야 함.
-    host4.send('createRoom', { churchId: church4Id, title: '카테고리방', map: 'sanctuary', capacity: 'unlimited', level: 'elementary' });
+    host4.send('createRoom', { pin: TEST_ROOM_PIN, churchId: church4Id, title: '카테고리방', map: 'sanctuary', capacity: 'unlimited', level: 'elementary' });
     const catRoom = await host4.waitFor('roomCreated');
     const catRoomId = catRoom.room.id;
     assert(catRoom.room.level === 'elementary', '카테고리 검증방의 level이 elementary여야 함');
@@ -715,7 +825,7 @@ async function main() {
     // 피해서 출제해야 함. 각 게임의 문제 수는 뱅크 크기에 맞춰 동적으로 계산해서(두 게임을
     // 합쳐도 뱅크를 다 못 쓰고 여유가 남도록), 큐레이션으로 뱅크가 작아져도 테스트가 깨지지
     // 않게 해요.
-    host4.send('createRoom', { churchId: church4Id, title: '최근출제회피방', map: 'sanctuary', capacity: 'unlimited', level: 'middle' });
+    host4.send('createRoom', { pin: TEST_ROOM_PIN, churchId: church4Id, title: '최근출제회피방', map: 'sanctuary', capacity: 'unlimited', level: 'middle' });
     const recentRoom = await host4.waitFor('roomCreated');
     const recentRoomId = recentRoom.room.id;
 
@@ -820,15 +930,40 @@ async function main() {
     // 반 연결 + 팀 대결 방 만들기 (교사 소켓이 호스트)
     teacher.send('findOrCreateChurch', { name: `검증교회-팀-${Date.now()}` });
     const tChurch = await teacher.waitFor('churchJoined');
-    teacher.send('createRoom', { churchId: tChurch.church.id, title: '팀대결방', capacity: 8, groupCode, groupPin: PIN, teamMode: true });
+    teacher.send('createRoom', { pin: TEST_ROOM_PIN, churchId: tChurch.church.id, title: '팀대결방', capacity: 8, groupCode, groupPin: PIN, teamMode: true });
     const tRoomCreated = await teacher.waitFor('roomCreated');
     const tRoomId = tRoomCreated.room.id;
     assert(tRoomCreated.room.groupCode === opened.group.code, '방이 반에 연결되어야 함');
     assert(tRoomCreated.room.team.enabled && tRoomCreated.room.team.teams.length === 2, '팀 대결(2팀)이 켜져 있어야 함');
     assert(tRoomCreated.room.team.bonus === 2, '승리 보너스 기본값은 2');
 
+    // --- 방 PIN ---
+    assert(tRoomCreated.room.pin === TEST_ROOM_PIN && typeof tRoomCreated.hostKey === 'string', '호스트는 자기가 정한 방 PIN 과 호스트 키를 받음');
+    await expectError(stranger, 'createRoom', { churchId: tChurch.church.id, title: '이상한PIN', pin: '12ab' }, /숫자 4자리/, '잘못된 방 PIN');
+    stranger.send('createRoom', { churchId: tChurch.church.id, title: '자동PIN방' });
+    const autoPinRoom = await stranger.waitFor('roomCreated');
+    assert(/^\d{4}$/.test(autoPinRoom.room.pin), `PIN 을 안 정하면 숫자 4자리 자동 생성: ${autoPinRoom.room.pin}`);
+    const pinTester = new Client('pin-tester');
+    await pinTester.ready();
+    const joinFailText = async (payload) => {
+      pinTester.buffer = pinTester.buffer.filter((m) => m.type !== 'error');
+      pinTester.send('joinRoom', { deviceId: 'device-pin', nickname: '핀테스트', ...payload });
+      return (await pinTester.waitFor('error')).message;
+    };
+    const wrongPinMsg = await joinFailText({ roomId: tRoomId, pin: '0000' });
+    assert(/PIN/.test(wrongPinMsg) && /다시 확인/.test(wrongPinMsg), `틀린 PIN 은 친절한 안내: ${wrongPinMsg}`);
+    assert((await joinFailText({ roomId: tRoomId })) === wrongPinMsg, 'PIN 없이도 입장 불가');
+    assert((await joinFailText({ roomId: 'no-such-room', pin: '0000' })) === wrongPinMsg, '없는 방과 틀린 PIN 은 같은 안내(방 존재 여부를 알려 주지 않음)');
+    // 호스트 화면: 호스트 키도 PIN 도 없으면 열 수 없음
+    pinTester.send('hostOpenRoom', { roomId: tRoomId });
+    await pinTester.waitFor('hostAuthRequired', (m) => m.roomId === tRoomId);
+    await expectError(pinTester, 'startQuiz', { roomId: tRoomId }, /호스트만/, '호스트 확인 없이 게임 시작');
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState');
+    teacher.send('hostOpenRoom', { roomId: tRoomId, hostKey: tRoomCreated.hostKey });
+    assert((await teacher.waitFor('roomState', (m) => m.room.id === tRoomId)).room.pin === TEST_ROOM_PIN, '호스트 키로 다시 열면 PIN 포함 상태를 받음');
+
     // 틀린 PIN 으로는 다른 방을 이 반에 연결할 수 없음
-    stranger.send('createRoom', { churchId: tChurch.church.id, title: '몰래방', groupCode, groupPin: '1111' });
+    stranger.send('createRoom', { pin: TEST_ROOM_PIN, churchId: tChurch.church.id, title: '몰래방', groupCode, groupPin: '1111' });
     const sneaky = await stranger.waitFor('roomCreated');
     assert(sneaky.room.groupCode === null, '틀린 PIN 으로 만든 방은 반에 연결되면 안 됨');
     // 호스트가 아닌 소켓은 팀 설정 불가
@@ -836,16 +971,49 @@ async function main() {
 
     // 입장 = 출석. 닉네임 단위로만 기록됨
     for (const p of tp) {
-      p.client.send('joinRoom', { roomId: tRoomId, deviceId: p.deviceId, nickname: p.nickname, avatar: p.avatar });
+      p.client.send('joinRoom', { pin: TEST_ROOM_PIN, roomId: tRoomId, deviceId: p.deviceId, nickname: p.nickname, avatar: p.avatar });
       const j = await p.client.waitFor('joined');
       assert(j.attendance && j.attendance.newlyMarked && j.attendance.week === currentWeek && j.attendance.streak === 1, `${p.nickname} 입장 시 출석이 기록되어야 함`);
+      assert(j.room.pin === undefined, '학생에게 가는 방 상태에는 PIN 이 없어야 함');
     }
+    // 맞는 PIN 이면 입장 성공 (위 4명), 이후 학생용 roomState 에도 PIN 없음
+    const pState = await tp[3].client.waitFor('roomState', (m) => m.room.players.length === 4);
+    assert(pState.room.pin === undefined, '학생용 roomState 에 PIN 없음');
     let g = await latestGroup(teacher, (x) => x.members.length === 4);
+    // 출석은 "방 입장 순간" 집계: 아직 게임을 한 판도 안 했는데 4명 모두 출석
+    assert(g.games.length === 0 && g.ledger.length === 0, '게임 시작 전(기록된 게임 0판)에 이미 출석 처리');
+
+    // --- 닉네임 중복 불가 (먼저 등록한 친구 우선) ---
+    const dup = new Client('dup');
+    await dup.ready();
+    const dupJoin = { roomId: tRoomId, pin: TEST_ROOM_PIN, deviceId: 'device-dup', avatar: 's0b0h0' };
+    await expectError(dup, 'joinRoom', { ...dupJoin, nickname: '블록1' }, /이미 다른 친구가 쓰고 있는 이름.*다른 이름을 골라/, '같은 닉네임 입장');
+    await expectError(dup, 'joinRoom', { ...dupJoin, nickname: ' 블록 1 ' }, /다른 이름을 골라/, '공백만 다른 닉네임 입장');
+    // 같은 반에 연결된 다른 방에서도 그 닉네임은 주인 것
+    teacher.send('createRoom', { churchId: tChurch.church.id, title: '같은반 둘째방', pin: '7777', groupCode });
+    const room2 = await teacher.waitFor('roomCreated', (m) => m.room.title === '같은반 둘째방');
+    assert(room2.room.groupCode === opened.group.code, '둘째 방도 같은 반에 연결');
+    await expectError(dup, 'joinRoom', { roomId: room2.room.id, pin: '7777', deviceId: 'device-dup', nickname: '블록1' }, /우리 반에서 이미 다른 친구/, '같은 반 다른 방에서도 중복 닉네임 거부');
+    // 다른 반에서는 같은 닉네임을 써도 됨
+    const otherCode = `다른반${Date.now() % 100000}`;
+    teacher.send('groupOpen', { code: otherCode, pin: '1357', create: true });
+    await teacher.waitFor('groupData', (m) => m.group.code === otherCode);
+    teacher.send('createRoom', { churchId: tChurch.church.id, title: '다른반방', pin: '8888', groupCode: otherCode });
+    const room3 = await teacher.waitFor('roomCreated', (m) => m.room.title === '다른반방');
+    dup.send('joinRoom', { roomId: room3.room.id, pin: '8888', deviceId: 'device-dup', nickname: '블록1' });
+    assert((await dup.waitFor('joined')).playerId === 'device-dup', '다른 반에서는 같은 닉네임으로 입장 가능');
+    // 원래 방은 여전히 4명, 반 기록도 4명 그대로. 그리고 다시 원래 방 호스트로 돌아옴
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState' && m.type !== 'groupData');
+    teacher.send('hostOpenRoom', { roomId: tRoomId, hostKey: tRoomCreated.hostKey });
+    assert((await teacher.waitFor('roomState', (m) => m.room.id === tRoomId)).room.players.length === 4, '중복 닉네임 시도 후에도 방 인원 4명');
+    teacher.send('groupOpen', { code: groupCode, pin: PIN });
+    g = await latestGroup(teacher, (x) => x.code === opened.group.code);
+    assert(g.members.length === 4 && g.members.every((m) => m.claimed), '반 기록 4명 그대로, 닉네임 주인 등록됨');
     assert(g.members.every((m) => m.presentThisWeek && m.attendedWeeks.includes(currentWeek) && m.attendCount === 1), '4명 모두 이번 주 출석');
     assert(g.weeks.at(-1).id === currentWeek && g.weeks.at(-1).presentCount === 4, '주별 기록의 이번 주 출석 인원 4');
     assert(Object.keys(g.members[0]).every((k) => !/name$|phone|birth/i.test(k) || k === 'nickname'), '닉네임 외 개인정보 필드가 없어야 함');
     // 같은 주 재입장은 출석 1회 그대로
-    tp[0].client.send('joinRoom', { roomId: tRoomId, deviceId: tp[0].deviceId, nickname: tp[0].nickname, avatar: tp[0].avatar });
+    tp[0].client.send('joinRoom', { pin: TEST_ROOM_PIN, roomId: tRoomId, deviceId: tp[0].deviceId, nickname: tp[0].nickname, avatar: tp[0].avatar });
     const rejoin = await tp[0].client.waitFor('joined');
     assert(rejoin.attendance.newlyMarked === false, '같은 주 재입장은 새 출석이 아님');
     // 교사가 폰 없는 친구 출석 추가 / 취소
@@ -933,6 +1101,13 @@ async function main() {
     assert(b1.reduce((s2, e) => s2 + e.delta, 0) === 3 && b1.length === 4, '개인 내역 합계 = 누적');
     assert(g.ledger.length === 4 + 2 + 2 + 2, `장부 항목 수(중복 지급 없음): ${g.ledger.length}`);
 
+    // 주간 상한을 교사가 8로 낮춤 (교사 PIN 인증된 소켓만 가능)
+    await expectError(stranger, 'groupSettings', { code: groupCode, weeklyCap: 1 }, /PIN 확인/, '미인증 상한 변경');
+    await expectError(teacher, 'groupSettings', { code: groupCode, weeklyCap: 500 }, /1~100/, '범위 밖 상한');
+    assert(g.settings.weeklyCap === 20, '상한 기본값 20');
+    teacher.send('groupSettings', { code: groupCode, weeklyCap: 8 });
+    g = await latestGroup(teacher, (x) => x.code === opened.group.code && x.settings.weeklyCap === 8);
+
     // 다시 시작해도 팀은 유지되고, 동점이면 공동 우승(진 팀 없음)
     teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState'); // 첫 판의 남은 상태 메시지 제거
     teacher.send('startQuiz', { roomId: tRoomId, questionCount: 1 });
@@ -947,16 +1122,69 @@ async function main() {
     const tie = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.status === 'finished' && m.room.finalResult);
     const tieTeam = tie.room.finalResult.team;
     assert(tieTeam.tie === true && tieTeam.loserTeamIds.length === 0 && tieTeam.winnerTeamIds.length === 2, `1:1 동점은 공동 우승(진 팀 없음): ${JSON.stringify(tieTeam)}`);
-    // 공동 우승이면 두 팀 모두 보너스: 참가1 + 1등3 + 팀3 = 7
-    assert(tie.room.finalResult.awards.every((a) => a.delta === 7), '공동 우승 팀원 모두 보너스');
+    // 공동 우승이면 두 팀 모두 보너스: 참가1 + 1등3 + 팀3 = 7 을 받을 차례인데,
+    // 이 판 직전에 주간 상한을 8로 낮췄으므로 이미 7개 받은 빨강팀은 1개만 받는다.
+    for (const p of tp) {
+      const a = tie.room.finalResult.awards.find((x) => x.id === p.deviceId);
+      if (wanted[p.deviceId] === 'red') {
+        assert(a.requested === 7 && a.delta === 1 && a.capped === true && a.weekRemaining === 0 && a.weeklyCap === 8, `상한(8)으로 깎인 지급: ${JSON.stringify(a)}`);
+      } else {
+        assert(a.delta === 7 && a.capped === false && a.weekRemaining === 0, `상한 안이면 전부 지급(교사 수동 +5 는 상한에 안 들어감): ${JSON.stringify(a)}`);
+      }
+    }
+    g = await latestGroup(teacher, (x) => x.code === opened.group.code && x.games.length === 2);
+    assert(g.settings.weeklyCap === 8 && totalOf(g, '블록1') === 3 + 1 && totalOf(g, '블록3') === 6 + 7, `상한 적용 후 누적: ${g.members.map((m) => `${m.nickname}=${m.total}`)}`);
+    const blk1 = g.members.find((m) => m.nickname === '블록1');
+    assert(blk1.weekEarned === 8 && blk1.weekRemaining === 0, '상한 사용량 8/8, 남은 0');
+    assert(g.ledger.some((e) => e.nickname === '블록1' && e.capped && e.delta === 0 && /주간 상한 8개 도달 · 지급 없음/.test(e.reason)), '장부에 상한으로 못 받은 항목이 남음');
+    // 교사 수동 지급은 상한을 넘어도 들어가고 '상한 예외'로 표시
+    teacher.send('groupAdjust', { code: groupCode, nickname: '블록1', delta: 5, reason: '예배 도우미' });
+    g = await latestGroup(teacher, (x) => x.code === opened.group.code && totalOf(x, '블록1') === 9);
+    assert(g.ledger.find((e) => e.nickname === '블록1' && e.reason === '예배 도우미').override === true, '수동 지급은 상한 예외로 기록');
+    await expectError(teacher, 'groupAdjust', { code: groupCode, nickname: '블록1', delta: -10, reason: '너무 많이' }, /뺄 수 없어요/, '잔액보다 많이 차감');
+
+    // --- 달란트 상점 (블록1: 잔액 9) ---
+    const shopper = tp[0].client;
+    const shopMsg = async (type, payload) => {
+      shopper.buffer = shopper.buffer.filter((m) => m.type !== 'shopData');
+      shopper.send(type, { roomId: tRoomId, ...payload });
+      return shopper.waitFor('shopData');
+    };
+    let shop = await shopMsg('shopOpen', {});
+    assert(shop.shop.balance === 9 && shop.shop.items.length >= 8 && shop.shop.weeklyCap === 8 && shop.shop.weekRemaining === 0, `상점 열기: ${JSON.stringify({ ...shop.shop, items: undefined })}`);
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState');
+    shop = await shopMsg('shopBuy', { itemId: 'hat-melon' });
+    assert(shop.charged === 7 && shop.shop.balance === 2 && shop.shop.equipped.hat === 'hat-melon', '구입: 7 차감, 자동 착용');
+    const worn = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.players.find((pl) => pl.id === tp[0].deviceId)?.cosmetics?.hat === 'hat-melon');
+    assert(worn.room.players.find((pl) => pl.id === tp[1].deviceId).cosmetics.hat === undefined, '착용 아이템은 산 친구 캐릭터에만 보임');
+    shop = await shopMsg('shopBuy', { itemId: 'hat-melon' });
+    assert(shop.charged === 0 && shop.shop.balance === 2, '보유 아이템 재구입은 차감 없음');
+    await expectError(shopper, 'shopBuy', { roomId: tRoomId, itemId: 'outfit-checker' }, /3개 모자라요/, '잔액 부족 구입');
+    shop = await shopMsg('shopEquip', { itemId: 'hat-melon', equip: false });
+    assert(shop.shop.equipped.hat === undefined && shop.shop.balance === 2, '벗기');
+    shop = await shopMsg('shopEquip', { itemId: 'hat-melon', equip: true });
+    assert(shop.shop.equipped.hat === 'hat-melon', '다시 착용');
+    await expectError(shopper, 'shopEquip', { roomId: tRoomId, itemId: 'extra-wings' }, /사지 않은/, '안 산 아이템 착용');
+    await expectError(stranger, 'shopBuy', { roomId: tRoomId, itemId: 'hat-sprout' }, /방에 먼저/, '방에 없는 소켓의 구입');
+    g = await latestGroup(teacher, (x) => x.code === opened.group.code && totalOf(x, '블록1') === 2);
+    const shopRows = g.ledger.filter((e) => e.kind === 'shop');
+    assert(shopRows.length === 1 && shopRows[0].delta === -7 && shopRows[0].nickname === '블록1' && shopRows[0].reason.includes('수박 헬멧'), '상점 지출이 장부에 한 번만 기록');
+    assert(g.members.every((m) => m.total >= 0) && g.members.find((m) => m.nickname === '블록1').equipped.hat === 'hat-melon', '누구도 잔액 음수 아님, 착용 정보 반영');
+    // 다시 들어와도 착용 아이템 유지
+    tp[0].client.send('joinRoom', { roomId: tRoomId, deviceId: tp[0].deviceId, nickname: tp[0].nickname, avatar: tp[0].avatar });
+    const back = await tp[0].client.waitFor('joined');
+    assert(back.room.players.find((pl) => pl.id === tp[0].deviceId).cosmetics.hat === 'hat-melon', '재입장(PIN 없이, 이미 방에 있던 기기) 후에도 착용 유지');
 
     // 서버가 실제로 파일에 저장했는지 (임시 폴더, 원자적 쓰기라 .tmp 가 남지 않음)
     const recFiles = fs.readdirSync(SERVER_RECORDS_DIR);
-    assert(recFiles.length === 1 && recFiles[0].endsWith('.json'), `반 기록 파일: ${recFiles}`);
-    const saved = JSON.parse(fs.readFileSync(path.join(SERVER_RECORDS_DIR, recFiles[0]), 'utf8'));
+    assert(recFiles.length === 2 && recFiles.every((f) => f.endsWith('.json')), `반 기록 파일(반 2개): ${recFiles}`);
+    const saved = JSON.parse(fs.readFileSync(path.join(SERVER_RECORDS_DIR, `${opened.group.code}.json`), 'utf8'));
     assert(saved.games.length === 2 && saved.pinHash && !JSON.stringify(saved).includes(`"${PIN}"`), '파일에 게임 2판 저장, PIN 평문 없음');
     log('attendance, talent auto-award + manual adjust, team split + winner/loser + bonus ok');
+    log('room PIN, unique nickname, attendance-on-enter, weekly cap, manual override, shop purchase/equip/ledger ok');
 
+    pinTester.close();
+    dup.close();
     teacher.close();
     stranger.close();
     for (const p of tp) p.client.close();

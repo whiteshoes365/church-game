@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import type { Capacity, Level, MapTheme, RoomSummary } from '../protocol';
 import { loadGroupSession } from '../groupSession';
+import { saveHostKey } from '../hostKeys';
 import { DEFAULT_LEVEL, LEVEL_CLASS, LEVEL_LABELS, LEVEL_OPTIONS } from '../levels';
 
 const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
@@ -34,6 +35,8 @@ export function HostRooms() {
   const session = loadGroupSession();
   const [useGroup, setUseGroup] = useState<boolean>(!!session);
   const [teamMode, setTeamMode] = useState(false);
+  const [pin, setPin] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     gameSocket.connect();
@@ -41,20 +44,29 @@ export function HostRooms() {
       if (msg.churchId === churchId) setRooms(msg.rooms);
     });
     const offCreated = gameSocket.on('roomCreated', (msg) => {
+      if (msg.hostKey) saveHostKey(msg.room.id, msg.hostKey);
       navigate(`/host/room/${msg.room.id}`);
     });
+    const offError = gameSocket.on('error', (msg) => setFormError(msg.message));
     gameSocket.send('listRooms', { churchId });
     const interval = setInterval(() => gameSocket.send('listRooms', { churchId }), 3000);
     return () => {
       offList();
       offCreated();
+      offError();
       clearInterval(interval);
     };
   }, [churchId, navigate]);
 
   function createRoom() {
     if (!title.trim()) return;
+    if (pin && !/^\d{4}$/.test(pin)) {
+      setFormError('방 PIN은 숫자 4자리로 정해 주세요. 비워 두면 자동으로 만들어요.');
+      return;
+    }
+    setFormError(null);
     gameSocket.send('createRoom', {
+      pin: pin || undefined,
       churchId,
       title: title.trim(),
       map,
@@ -121,6 +133,16 @@ export function HostRooms() {
               </button>
             ))}
           </div>
+          <p className="picker-label">방 PIN (학생 입장용 숫자 4자리)</p>
+          <input
+            className="input"
+            inputMode="numeric"
+            placeholder="비워 두면 자동으로 만들어요"
+            maxLength={4}
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+          />
+          {formError && <p className="form-error">{formError}</p>}
           <p className="picker-label">더 재미있게</p>
           <div className="row">
             <button type="button" className={`btn btn-sm ${teamMode ? 'btn-primary' : ''}`} onClick={() => setTeamMode((v) => !v)}>
