@@ -1747,3 +1747,35 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* 방 화면은 큰 화면 한 장에 딱 맞게: 스크롤 없이 3D 무대가 남는 높이를 채운다 */
+.host-room-screen {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.host-room-screen .map-area-3d {
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .host-room-screen {
+    height: auto;
+    overflow: visible;
+  }
+  .host-room-screen .map-area-3d {
+    min-height: 420px;
+  }
+}
+
+/* 게임이 끝나면 점수판·팀 결과를 먼저, 설정 패널은 아래로 */
+.side-finished .setup-panel {
+  order: 5;
+}
+.side-finished .banner-ad-slot {
+  order: 6;
+}
+
+.host-room-screen .scoreboard {
+  flex-shrink: 0;
+}

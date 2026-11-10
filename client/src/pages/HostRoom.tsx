@@ -148,7 +148,7 @@ export function HostRoom() {
   }
 
   return (
-    <div className="host-screen">
+    <div className="host-screen host-room-screen">
       <div className="host-header">
         <div>
           <h1 className="title" style={{ textAlign: 'left' }}>
@@ -178,7 +178,7 @@ export function HostRoom() {
             </button>
           )}
           {room.groupCode && (
-            <a className="btn btn-sm btn-link" href={`/host/group/${encodeURIComponent(room.groupCode)}`} target="_blank" rel="noreferrer">
+            <a className="btn btn-sm btn-link" href={`#/host/group/${encodeURIComponent(room.groupCode)}`} target="_blank" rel="noreferrer">
               출석 · 달란트
             </a>
           )}
@@ -331,7 +331,7 @@ export function HostRoom() {
           </div>
         </div>
 
-        <div className="side-panel">
+        <div className={`side-panel ${final ? 'side-finished' : ''}`}>
           {canSetup && (
             <div className="setup-panel">
               <div className="setup-row">

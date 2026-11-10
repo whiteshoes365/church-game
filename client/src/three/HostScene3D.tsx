@@ -62,12 +62,14 @@ export function HostScene3D({ players, status, correctAnswer, positions, zones =
       <LetterStructure shape="O" origin={[zoneCenterX(zones.O), 0, -1.2]} reveal={revealing ? (correctAnswer === 'O' ? 'correct' : 'wrong') : 'idle'} />
       <LetterStructure shape="X" origin={[zoneCenterX(zones.X), 0, -1.2]} reveal={revealing ? (correctAnswer === 'X' ? 'correct' : 'wrong') : 'idle'} />
 
-      {players.map((p) => {
+      {players.map((p, index) => {
         const pos = positions[p.id];
         // Players spawn near the back of the map (see server randomSpawn) so
         // the fallback before the first `positions` broadcast arrives looks
         // sane rather than snapping everyone to the origin.
-        const x = pos?.x ?? 0;
+        // 대기실에서는 위치 방송이 없으므로 한 점에 겹치지 않게 옆으로 나란히 세운다.
+        const lineupStep = Math.min(1.6, 14 / Math.max(1, players.length));
+        const x = pos?.x ?? (index - (players.length - 1) / 2) * lineupStep;
         const z = pos?.z ?? 8;
         const y = pos?.y ?? 0;
         const reveal: RevealState = revealing ? (p.side === correctAnswer ? 'correct' : 'wrong') : 'idle';

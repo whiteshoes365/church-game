@@ -16,13 +16,13 @@ export interface ResultColumn {
 }
 
 const MAX_COLS = 4;
-const SPACING = 1.25;
+const SPACING = 1.9;
 const CONFETTI_COLORS = ['#e2483d', '#3182f6', '#45b35c', '#f5b400', '#ec5fa3', '#9b59b6', '#ffffff'];
 
 function columnFootprint(count: number) {
   const cols = Math.max(2, Math.min(MAX_COLS, count));
   const rows = Math.max(1, Math.ceil(count / MAX_COLS));
-  return { cols, rows, width: cols * SPACING + 0.4, depth: rows * SPACING + 0.4 };
+  return { cols, rows, width: cols * SPACING + 0.4, depth: rows * SPACING + 0.9 };
 }
 
 function Podium({ column, x }: { column: ResultColumn; x: number }) {
@@ -50,7 +50,7 @@ function Podium({ column, x }: { column: ResultColumn; x: number }) {
         const col = i % MAX_COLS;
         const px = (col - (inRow - 1) / 2) * SPACING;
         const rows = Math.ceil(column.members.length / MAX_COLS);
-        const pz = (row - (rows - 1) / 2) * SPACING;
+        const pz = (row - (rows - 1) / 2) * SPACING + (col % 2 === 0 ? 0.25 : -0.25);
         return (
           <group key={m.id} position={[px, h, pz]}>
             <VoxelCharacter avatarId={m.avatar} nickname={m.nickname} target={[0, 0, 0]} reveal={column.winner ? 'correct' : 'idle'} scale={1.25} facing={0} />

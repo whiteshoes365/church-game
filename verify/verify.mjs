@@ -6,6 +6,7 @@ import os from 'node:os';
 import WebSocket from 'ws';
 import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL, CATEGORIES, DEFAULT_QUESTION_COUNT } from '../server/src/questions.js';
 import { ZONES, MAP_BOUNDS, WALK_SPEED, RUN_SPEED, CRAWL_SPEED } from '../server/src/state.js';
+import * as records from '../server/src/records.js';
 
 // Question text is unique across all levels (verify looks questions up by
 // text alone), so a single flat lookup works regardless of which level a
@@ -185,11 +186,120 @@ async function measureSpeed(host, roomId, client, deviceId, opts, durationMs) {
   return dist / ((t1 - t0) / 1000);
 }
 
+// 출석·달란트 기록은 실제 데이터 폴더를 건드리지 않도록 임시 폴더에만 쓴다.
+const SERVER_RECORDS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'church-records-e2e-'));
+const UNIT_RECORDS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'church-records-unit-'));
+
+// 오류 응답을 기대하는 요청: 이전에 쌓인 error 메시지를 비우고 보낸 뒤 기다린다.
+async function expectError(client, type, payload, pattern, label) {
+  client.buffer = client.buffer.filter((m) => m.type !== 'error');
+  client.send(type, payload);
+  const err = await client.waitFor('error');
+  assert(pattern.test(err.message), `${label}: 예상한 오류가 아님 -> "${err.message}"`);
+}
+
+async function latestGroup(client, predicate) {
+  const msg = await client.waitFor('groupData', (m) => predicate(m.group));
+  return msg.group;
+}
+
+// records.js 단위 검증 (주 계산, 출석/연속 출석, 달란트 규칙, 파일 저장)
+function verifyRecordsUnit() {
+  process.env.RECORDS_DIR = UNIT_RECORDS_DIR;
+  const at = (iso) => Date.parse(iso);
+
+  // ISO 주는 한국 시간 기준: 일요일 23:59 KST 와 월요일 00:00 KST 는 다른 주
+  assert(records.isoWeekKST(at('2026-11-08T23:59:00+09:00')) === '2026-W45', '일요일 밤(KST)은 W45');
+  assert(records.isoWeekKST(at('2026-11-09T00:00:00+09:00')) === '2026-W46', '월요일 0시(KST)는 W46');
+  assert(records.isoWeekKST(at('2027-01-01T12:00:00+09:00')) === '2026-W53', '2027-01-01 은 2026-W53');
+  assert(records.prevWeek('2027-W01') === '2026-W53', '연도 경계의 이전 주');
+
+  const code = '단위반';
+  let threw = false;
+  try { records.openGroup(code, '1234'); } catch { threw = true; }
+  assert(threw, '없는 반은 create 없이 열 수 없어야 함');
+  assert(records.openGroup(code, '1234', { create: true }).created === true, '새 반 생성');
+  threw = false;
+  try { records.openGroup(code, '9999'); } catch (e) { threw = /PIN/.test(e.message); }
+  assert(threw, '틀린 PIN 은 거부되어야 함');
+  threw = false;
+  try { records.openGroup('../etc', '1234', { create: true }); } catch { threw = true; }
+  assert(threw, '경로 문자가 들어간 반 코드는 거부되어야 함');
+
+  // 3주 연속 출석 → 3주째에 연속 출석 보너스 +1, 같은 주 재입장은 중복 기록 없음
+  const w1 = at('2026-10-25T11:00:00+09:00');
+  const w2 = at('2026-11-01T11:00:00+09:00');
+  const w3 = at('2026-11-08T11:00:00+09:00');
+  const a1 = records.markAttendance(code, { nickname: '꼬마사자', now: w1 });
+  assert(a1.newlyMarked && a1.streak === 1 && a1.streakBonus === 0, '첫 주 출석');
+  const a2 = records.markAttendance(code, { nickname: ' 꼬마사자 ', now: w2 });
+  assert(a2.streak === 2 && a2.streakBonus === 0, '2주 연속');
+  const a3 = records.markAttendance(code, { nickname: '꼬마사자', now: w3 });
+  assert(a3.streak === 3 && a3.streakBonus === records.TALENT_RULES.streakBonus, '3주 연속이면 보너스');
+  const a3b = records.markAttendance(code, { nickname: '꼬마사자', now: w3 + 60000 });
+  assert(!a3b.newlyMarked && a3b.streakBonus === 0, '같은 주에 다시 들어와도 한 번만 기록');
+  records.markAttendance(code, { nickname: '토끼친구', now: w1 });
+  records.markAttendance(code, { nickname: '토끼친구', now: w3 }); // 한 주 빠짐 → 연속 1주
+
+  let sum = records.groupSummary(code, { now: w3 });
+  const lion = sum.members.find((m) => m.nickname === '꼬마사자');
+  const rabbit = sum.members.find((m) => m.nickname === '토끼친구');
+  assert(lion.attendCount === 3 && lion.streak === 3 && lion.badge?.id === 'iron', '연속 3주 배지');
+  assert(rabbit.attendCount === 2 && rabbit.streak === 1 && rabbit.badge === null, '빠진 주가 있으면 연속이 끊김');
+  assert(lion.total === 1 && sum.mvp[0]?.nickname === '꼬마사자', '연속 출석 보너스가 누적·이번 주 MVP 에 반영');
+  assert(sum.weeks.length === 8 && sum.weeks.at(-1).id === '2026-W45' && sum.weeks.at(-1).presentCount === 2, '주별 기록(최근 8주)');
+  assert(sum.weeks.at(-2).presentCount === 1 && sum.weeks.at(-3).presentCount === 2, '주별 출석 인원');
+
+  // 자동 달란트 규칙: 참가 +1, 1/2/3등 +3/+2/+1(동점 같은 등수, 0점 제외), 만점 +2(5문제 이상), 팀 승리 보너스
+  const awards = records.computeGameAwards({
+    totalQuestions: 5,
+    players: [
+      { id: 'a', nickname: 'A', score: 5, teamId: 'red' },
+      { id: 'b', nickname: 'B', score: 3, teamId: 'blue' },
+      { id: 'c', nickname: 'C', score: 3, teamId: 'red' },
+      { id: 'd', nickname: 'D', score: 1, teamId: 'blue' },
+      { id: 'e', nickname: 'E', score: 0, teamId: 'blue' },
+    ],
+    team: { bonus: 2, winnerTeamIds: ['red'], names: { red: '빨강 벽돌팀' } },
+  });
+  const delta = Object.fromEntries(awards.map((a) => [a.id, a.delta]));
+  assert(delta.a === 1 + 3 + 2 + 2, `1등+만점+팀승리 = 8 이어야 하는데 ${delta.a}`);
+  assert(delta.b === 1 + 2, `공동 2등 = 3 이어야 하는데 ${delta.b}`);
+  assert(delta.c === 1 + 2 + 2, `공동 2등+팀승리 = 5 이어야 하는데 ${delta.c}`);
+  assert(delta.d === 1, `4등은 참가 점수만: ${delta.d}`);
+  assert(delta.e === 1, `0점은 참가 점수만: ${delta.e}`);
+
+  // 수동 가감: 사유 필수, 0 불가, 음수 가능
+  for (const bad of [{ delta: 0, reason: 'x' }, { delta: 3, reason: '  ' }, { delta: 1000, reason: 'x' }]) {
+    threw = false;
+    try { records.adjustTalent(code, { nickname: '꼬마사자', ...bad, now: w3 }); } catch { threw = true; }
+    assert(threw, `잘못된 수동 조정은 거부되어야 함: ${JSON.stringify(bad)}`);
+  }
+  records.adjustTalent(code, { nickname: '꼬마사자', delta: 5, reason: '암송 완료', now: w3 });
+  records.adjustTalent(code, { nickname: '꼬마사자', delta: -2, reason: '간식 교환', now: w3 });
+
+  // 파일로 저장되고(임시 파일 안 남김), PIN 평문은 없고, 캐시를 비워도 다시 읽힘
+  const files = fs.readdirSync(UNIT_RECORDS_DIR);
+  assert(files.length === 1 && files[0] === `${code}.json`, `반 파일 하나만 있어야 함: ${files}`);
+  const raw = fs.readFileSync(path.join(UNIT_RECORDS_DIR, files[0]), 'utf8');
+  assert(!raw.includes('"1234"') && !/"pin"\s*:/.test(raw), 'PIN 평문이 파일에 저장되면 안 됨');
+  records._clearCache();
+  sum = records.groupSummary(code, { now: w3 });
+  assert(sum.members.find((m) => m.nickname === '꼬마사자').total === 1 + 5 - 2, '재시작(캐시 초기화) 후에도 누적 달란트 유지');
+  const hist = sum.ledger.filter((e) => e.nickname === '꼬마사자');
+  assert(hist.length === 3 && hist[0].reason === '간식 교환' && hist[0].delta === -2 && hist[0].kind === 'manual', '개인 내역(최신순)에 사유가 남아야 함');
+  assert(JSON.stringify(sum).includes('pinHash') === false, '요약에 PIN 해시가 나가면 안 됨');
+  delete process.env.RECORDS_DIR;
+  fs.rmSync(UNIT_RECORDS_DIR, { recursive: true, force: true });
+  log('records unit checks ok (KST week, attendance, streak badge/bonus, award rules, manual adjust, atomic file persistence)');
+}
+
 async function main() {
+  verifyRecordsUnit();
   log(`starting server on port ${PORT}...`);
   const server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(ROOT, 'server'),
-    env: { ...process.env, PORT: String(PORT) },
+    env: { ...process.env, PORT: String(PORT), RECORDS_DIR: SERVER_RECORDS_DIR },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -682,6 +792,175 @@ async function main() {
     const exampleWeekFileAfter = fs.existsSync(path.join(ROOT, 'server/data/questions/2026-46.json'));
     assert(exampleWeekFileAfter === exampleWeekFileBefore, 'add-week.mjs --dry-run은 실제 파일을 쓰면 안 됨');
     log('add-week.mjs accepts docs/example-week.json in --dry-run mode without writing ok');
+
+    // ------------------------------------------------------------------
+    // 9. 출석 · 달란트 · 팀 대결 (end-to-end)
+    // ------------------------------------------------------------------
+    log('--- attendance / talent ledger / team battle tests ---');
+    const teacher = new Client('teacher');
+    const stranger = new Client('stranger');
+    const tp = [1, 2, 3, 4].map((n) => ({ client: new Client(`tp${n}`), deviceId: `device-tp${n}`, nickname: `블록${n}`, avatar: `s${n % 4}b${n}h${n}` }));
+    await Promise.all([teacher.ready(), stranger.ready(), ...tp.map((p) => p.client.ready())]);
+    const groupCode = `검증반${Date.now() % 100000}`;
+    const PIN = '2468';
+
+    await expectError(teacher, 'groupOpen', { code: groupCode, pin: PIN }, /없는 반/, '없는 반 열기');
+    await expectError(teacher, 'groupOpen', { code: groupCode, pin: '12' }, /PIN/, '짧은 PIN');
+    teacher.send('groupOpen', { code: groupCode, pin: PIN, create: true });
+    const opened = await teacher.waitFor('groupData');
+    assert(opened.created === true && opened.group.members.length === 0, '새 반이 비어 있는 상태로 만들어져야 함');
+    const currentWeek = records.isoWeekKST();
+    assert(opened.group.currentWeek === currentWeek, '이번 주(KST ISO week)가 맞아야 함');
+
+    // 교사 PIN 보호: 틀린 PIN / 인증 안 된 소켓은 조회·수정 불가
+    await expectError(stranger, 'groupOpen', { code: groupCode, pin: '0000' }, /PIN이 맞지/, '틀린 PIN');
+    await expectError(stranger, 'groupAdjust', { code: groupCode, nickname: '블록1', delta: 99, reason: '몰래' }, /PIN 확인/, '미인증 달란트 조정');
+    await expectError(stranger, 'groupMarkAttendance', { code: groupCode, nickname: '유령' }, /PIN 확인/, '미인증 출석 추가');
+
+    // 반 연결 + 팀 대결 방 만들기 (교사 소켓이 호스트)
+    teacher.send('findOrCreateChurch', { name: `검증교회-팀-${Date.now()}` });
+    const tChurch = await teacher.waitFor('churchJoined');
+    teacher.send('createRoom', { churchId: tChurch.church.id, title: '팀대결방', capacity: 8, groupCode, groupPin: PIN, teamMode: true });
+    const tRoomCreated = await teacher.waitFor('roomCreated');
+    const tRoomId = tRoomCreated.room.id;
+    assert(tRoomCreated.room.groupCode === opened.group.code, '방이 반에 연결되어야 함');
+    assert(tRoomCreated.room.team.enabled && tRoomCreated.room.team.teams.length === 2, '팀 대결(2팀)이 켜져 있어야 함');
+    assert(tRoomCreated.room.team.bonus === 2, '승리 보너스 기본값은 2');
+
+    // 틀린 PIN 으로는 다른 방을 이 반에 연결할 수 없음
+    stranger.send('createRoom', { churchId: tChurch.church.id, title: '몰래방', groupCode, groupPin: '1111' });
+    const sneaky = await stranger.waitFor('roomCreated');
+    assert(sneaky.room.groupCode === null, '틀린 PIN 으로 만든 방은 반에 연결되면 안 됨');
+    // 호스트가 아닌 소켓은 팀 설정 불가
+    await expectError(stranger, 'setTeamMode', { roomId: tRoomId, enabled: false }, /호스트만/, '호스트 아닌 팀 설정');
+
+    // 입장 = 출석. 닉네임 단위로만 기록됨
+    for (const p of tp) {
+      p.client.send('joinRoom', { roomId: tRoomId, deviceId: p.deviceId, nickname: p.nickname, avatar: p.avatar });
+      const j = await p.client.waitFor('joined');
+      assert(j.attendance && j.attendance.newlyMarked && j.attendance.week === currentWeek && j.attendance.streak === 1, `${p.nickname} 입장 시 출석이 기록되어야 함`);
+    }
+    let g = await latestGroup(teacher, (x) => x.members.length === 4);
+    assert(g.members.every((m) => m.presentThisWeek && m.attendedWeeks.includes(currentWeek) && m.attendCount === 1), '4명 모두 이번 주 출석');
+    assert(g.weeks.at(-1).id === currentWeek && g.weeks.at(-1).presentCount === 4, '주별 기록의 이번 주 출석 인원 4');
+    assert(Object.keys(g.members[0]).every((k) => !/name$|phone|birth/i.test(k) || k === 'nickname'), '닉네임 외 개인정보 필드가 없어야 함');
+    // 같은 주 재입장은 출석 1회 그대로
+    tp[0].client.send('joinRoom', { roomId: tRoomId, deviceId: tp[0].deviceId, nickname: tp[0].nickname, avatar: tp[0].avatar });
+    const rejoin = await tp[0].client.waitFor('joined');
+    assert(rejoin.attendance.newlyMarked === false, '같은 주 재입장은 새 출석이 아님');
+    // 교사가 폰 없는 친구 출석 추가 / 취소
+    teacher.send('groupMarkAttendance', { code: groupCode, nickname: '폰없는친구' });
+    g = await latestGroup(teacher, (x) => x.members.length === 5);
+    assert(g.members.find((m) => m.nickname === '폰없는친구').presentThisWeek, '교사 수동 출석');
+    teacher.send('groupMarkAttendance', { code: groupCode, nickname: '폰없는친구', present: false });
+    g = await latestGroup(teacher, (x) => x.members.some((m) => m.nickname === '폰없는친구' && !m.presentThisWeek));
+    assert(g.weeks.at(-1).presentCount === 4, '출석 취소 후 인원 4');
+
+    // 팀 나누기: 늦게 들어온 친구도 자동 배정되어 2:2 균형
+    const teamOf = (room) => Object.fromEntries(room.players.map((pl) => [pl.id, pl.teamId]));
+    const sizesOf = (room) => room.team.teams.map((t) => t.size).sort();
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState');
+    teacher.send('autoSplitTeams', { roomId: tRoomId });
+    let tState = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId);
+    assert(JSON.stringify(sizesOf(tState.room)) === '[2,2]', `자동 나누기는 2:2 여야 하는데 ${sizesOf(tState.room)}`);
+    assert(tState.room.team.teams.map((t) => t.name).join() === '빨강 벽돌팀,파랑 얼음팀', '블록 색 팀 이름');
+    // 3팀으로 바꾸면 다시 균형 배정(2:1:1), 다시 2팀으로
+    teacher.send('setTeamMode', { roomId: tRoomId, count: 3 });
+    tState = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.team.count === 3);
+    assert(JSON.stringify(sizesOf(tState.room)) === '[1,1,2]', `3팀 균형 배정: ${sizesOf(tState.room)}`);
+    teacher.send('setTeamMode', { roomId: tRoomId, count: 2, bonus: 3 });
+    tState = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.team.count === 2 && m.room.team.bonus === 3);
+    // 수동 배정: 블록1·블록2 = 빨강, 블록3·블록4 = 파랑
+    const wanted = { [tp[0].deviceId]: 'red', [tp[1].deviceId]: 'red', [tp[2].deviceId]: 'blue', [tp[3].deviceId]: 'blue' };
+    for (const [playerId, teamId] of Object.entries(wanted)) teacher.send('assignTeam', { roomId: tRoomId, playerId, teamId });
+    tState = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && JSON.stringify(teamOf(m.room)) === JSON.stringify(wanted));
+    await expectError(teacher, 'assignTeam', { roomId: tRoomId, playerId: tp[0].deviceId, teamId: 'purple' }, /없는 팀/, '없는 팀 배정');
+
+    // 2문제 게임: 빨강팀은 모두 정답, 파랑팀은 모두 오답
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState');
+    teacher.send('startQuiz', { roomId: tRoomId, questionCount: 2 });
+    for (let round = 0; round < 2; round++) {
+      const q = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.status === 'question' && m.room.question?.index === round);
+      const correct = answerFor(q.room.question.text);
+      await expectError(teacher, 'assignTeam', { roomId: tRoomId, playerId: tp[0].deviceId, teamId: 'blue' }, /시작 전에만/, '게임 중 팀 변경');
+      const choices = tp.map((p) => (wanted[p.deviceId] === 'red' ? correct : opposite(correct)));
+      tp.forEach((p, i) => p.client.send('answer', { roomId: tRoomId, choice: choices[i] }));
+      const arrived = await waitUntilAllInZones(teacher, tRoomId, tp.map((p, i) => ({ deviceId: p.deviceId, zoneBox: ZONES[choices[i]] })), ZONE_ARRIVAL_TIMEOUT_MS);
+      assert(arrived, '팀 대결: 모든 플레이어가 선택한 구역에 도착해야 함');
+      teacher.send('reveal', { roomId: tRoomId });
+      const rev = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.status === 'reveal' && m.room.question?.index === round);
+      const red = rev.room.team.teams.find((t) => t.id === 'red');
+      const blue = rev.room.team.teams.find((t) => t.id === 'blue');
+      assert(red.total === (round + 1) * 2 && red.average === round + 1, `게임 중 빨강팀 점수: ${JSON.stringify(red)}`);
+      assert(blue.total === 0 && blue.average === 0, `게임 중 파랑팀 점수: ${JSON.stringify(blue)}`);
+      teacher.send('nextQuestion', { roomId: tRoomId });
+    }
+    const tFinal = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.status === 'finished');
+    const fr = tFinal.room.finalResult;
+    assert(fr && fr.team, '종료 시 팀 결과가 있어야 함');
+    assert(fr.team.winnerTeamIds.join() === 'red' && fr.team.loserTeamIds.join() === 'blue' && fr.team.tie === false, `이긴 팀=빨강, 진 팀=파랑이어야 함: ${JSON.stringify(fr.team)}`);
+    assert(fr.mvpIds.slice().sort().join() === [tp[0].deviceId, tp[1].deviceId].sort().join(), 'MVP 는 최고 득점자(공동)');
+    assert(fr.recorded === true && fr.awards.length === 4, '달란트가 장부에 기록되어야 함');
+    // 빨강: 참가1 + 1등3 + 팀 보너스3 = 7 (2문제라 만점 보너스 없음) / 파랑: 참가1
+    for (const p of tp) {
+      const award = fr.awards.find((a) => a.id === p.deviceId);
+      const expected = wanted[p.deviceId] === 'red' ? 7 : 1;
+      assert(award.delta === expected, `${p.nickname} 자동 달란트는 ${expected} 여야 하는데 ${award.delta}`);
+    }
+    assert(fr.awards.find((a) => a.id === tp[0].deviceId).parts.some((x) => x.kind === 'team' && x.delta === 3 && x.reason.includes('빨강 벽돌팀')), '팀 승리 보너스 항목');
+    // 플레이어도 같은 결과를 받음
+    const pFinal = await tp[2].client.waitFor('roomState', (m) => m.room.status === 'finished');
+    assert(pFinal.room.finalResult.team.loserTeamIds.includes('blue'), '플레이어 화면에도 팀 결과 전달');
+    // 끝난 뒤 nextQuestion 을 또 눌러도 달란트가 중복 지급되지 않음
+    teacher.send('nextQuestion', { roomId: tRoomId });
+
+    g = await latestGroup(teacher, (x) => x.games.length === 1);
+    const totalOf = (grp, nick) => grp.members.find((m) => m.nickname === nick)?.total;
+    assert(totalOf(g, '블록1') === 7 && totalOf(g, '블록2') === 7 && totalOf(g, '블록3') === 1 && totalOf(g, '블록4') === 1, `누적 달란트: ${g.members.map((m) => `${m.nickname}=${m.total}`)}`);
+    assert(g.members[0].total === 7 && g.members.at(-1).total <= 1, '순위표는 누적 달란트 내림차순');
+    assert(g.mvp.map((m) => m.nickname).sort().join() === '블록1,블록2' && g.mvp[0].weekTalents === 7, '이번 주 MVP');
+    assert(g.games[0].team.winnerTeamIds.join() === 'red' && g.games[0].mvpNicknames.length === 2 && g.games[0].week === currentWeek, '게임 기록');
+    assert(g.ledger.filter((e) => e.kind === 'team').length === 2 && g.ledger.filter((e) => e.kind === 'team').every((e) => e.delta === 3), '팀 보너스가 장부에 2건(승리 팀원)');
+
+    // 교사 수동 가감 (사유 포함) → 누적/개인 내역 반영
+    await expectError(teacher, 'groupAdjust', { code: groupCode, nickname: '블록3', delta: 5, reason: '' }, /사유/, '사유 없는 조정');
+    teacher.send('groupAdjust', { code: groupCode, nickname: '블록3', delta: 5, reason: '암송 완료' });
+    g = await latestGroup(teacher, (x) => totalOf(x, '블록3') === 6);
+    teacher.send('groupAdjust', { code: groupCode, nickname: '블록1', delta: -4, reason: '간식 교환' });
+    g = await latestGroup(teacher, (x) => totalOf(x, '블록1') === 3);
+    const b1 = g.ledger.filter((e) => e.nickname === '블록1');
+    assert(b1[0].kind === 'manual' && b1[0].delta === -4 && b1[0].reason === '간식 교환' && b1[0].week === currentWeek, '수동 차감 내역');
+    assert(b1.reduce((s2, e) => s2 + e.delta, 0) === 3 && b1.length === 4, '개인 내역 합계 = 누적');
+    assert(g.ledger.length === 4 + 2 + 2 + 2, `장부 항목 수(중복 지급 없음): ${g.ledger.length}`);
+
+    // 다시 시작해도 팀은 유지되고, 동점이면 공동 우승(진 팀 없음)
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState'); // 첫 판의 남은 상태 메시지 제거
+    teacher.send('startQuiz', { roomId: tRoomId, questionCount: 1 });
+    const tq = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.status === 'question' && m.room.finalResult === null);
+    assert(JSON.stringify(teamOf(tq.room)) === JSON.stringify(wanted), '다시 시작해도 팀 배정 유지');
+    const tieAnswer = answerFor(tq.room.question.text);
+    tp.forEach((p) => p.client.send('answer', { roomId: tRoomId, choice: tieAnswer }));
+    assert(await waitUntilAllInZones(teacher, tRoomId, tp.map((p) => ({ deviceId: p.deviceId, zoneBox: ZONES[tieAnswer] })), ZONE_ARRIVAL_TIMEOUT_MS), '동점 판: 모두 정답 구역 도착');
+    teacher.send('reveal', { roomId: tRoomId });
+    await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.status === 'reveal');
+    teacher.send('nextQuestion', { roomId: tRoomId });
+    const tie = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.status === 'finished' && m.room.finalResult);
+    const tieTeam = tie.room.finalResult.team;
+    assert(tieTeam.tie === true && tieTeam.loserTeamIds.length === 0 && tieTeam.winnerTeamIds.length === 2, `1:1 동점은 공동 우승(진 팀 없음): ${JSON.stringify(tieTeam)}`);
+    // 공동 우승이면 두 팀 모두 보너스: 참가1 + 1등3 + 팀3 = 7
+    assert(tie.room.finalResult.awards.every((a) => a.delta === 7), '공동 우승 팀원 모두 보너스');
+
+    // 서버가 실제로 파일에 저장했는지 (임시 폴더, 원자적 쓰기라 .tmp 가 남지 않음)
+    const recFiles = fs.readdirSync(SERVER_RECORDS_DIR);
+    assert(recFiles.length === 1 && recFiles[0].endsWith('.json'), `반 기록 파일: ${recFiles}`);
+    const saved = JSON.parse(fs.readFileSync(path.join(SERVER_RECORDS_DIR, recFiles[0]), 'utf8'));
+    assert(saved.games.length === 2 && saved.pinHash && !JSON.stringify(saved).includes(`"${PIN}"`), '파일에 게임 2판 저장, PIN 평문 없음');
+    log('attendance, talent auto-award + manual adjust, team split + winner/loser + bonus ok');
+
+    teacher.close();
+    stranger.close();
+    for (const p of tp) p.client.close();
+    fs.rmSync(SERVER_RECORDS_DIR, { recursive: true, force: true });
 
     host3.close();
     lp.close();
