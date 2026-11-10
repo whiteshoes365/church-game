@@ -4,3 +4,4 @@ dist
 *.log
 toss-app
 review/
+server/data/church-records/

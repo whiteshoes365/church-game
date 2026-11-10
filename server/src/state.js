@@ -21,6 +21,16 @@ export const JUMP_COOLDOWN_MS = 600;
 const SEPARATION_DIST = 0.6; // avatars start pushing apart below this distance
 export const PHYSICS_TICK_MS = 50; // ~20 Hz authoritative simulation
 
+// 블록 색 팀 (최대 4팀). 이름·색은 모두 직접 지은 것.
+export const TEAM_DEFS = [
+  { id: 'red', name: '빨강 벽돌팀', color: '#e2483d' },
+  { id: 'blue', name: '파랑 얼음팀', color: '#3182f6' },
+  { id: 'green', name: '초록 잔디팀', color: '#45b35c' },
+  { id: 'yellow', name: '노랑 황금팀', color: '#f5b400' },
+];
+export const DEFAULT_TEAM_BONUS = 2;
+export const MAX_TEAM_BONUS = 5;
+
 const churches = new Map(); // id -> { id, name, normalized }
 const rooms = new Map(); // id -> room
 
@@ -270,6 +280,9 @@ export function createRoom({ churchId, title, map, capacity, questionSeconds, le
     timer: null,
     lastResult: null,
     questionDurationMs: questionSeconds ? Math.max(1000, Math.round(Number(questionSeconds) * 1000)) : QUESTION_DURATION_MS,
+    groupCode: null, // 출석·달란트를 기록할 반 코드 (교사 PIN 확인 후에만 연결)
+    team: { enabled: false, count: 2, bonus: DEFAULT_TEAM_BONUS },
+    finalResult: null, // 게임이 끝나면 채워지는 결과 요약 (MVP, 팀 승패, 달란트)
   };
   rooms.set(room.id, room);
   return room;
@@ -294,9 +307,12 @@ export function joinRoom(room, { deviceId, nickname, avatar }) {
       side: null,
       score: 0,
       connected: true,
+      teamId: null,
       motion: createMotion(),
     };
     room.players.set(deviceId, player);
+    // 팀 대결이 켜진 방에 나중에 들어온 친구는 인원이 가장 적은 팀으로.
+    if (room.team.enabled) player.teamId = smallestTeamId(room);
   } else {
     player.nickname = (nickname || player.nickname).slice(0, 12);
     player.avatar = avatar || player.avatar;
@@ -313,9 +329,11 @@ export function startQuiz(room, questionCount) {
   recordPlayedForChurch(room.churchId, room.questions.map((q) => q.id));
   room.currentIndex = -1;
   room.lastResult = null;
+  room.finalResult = null;
   for (const p of room.players.values()) {
     p.score = 0;
     p.side = null;
+    if (room.team.enabled && !activeTeamIds(room).includes(p.teamId)) p.teamId = smallestTeamId(room);
   }
 }
 
@@ -404,7 +422,11 @@ export function serializeRoom(room) {
       side: p.side,
       score: p.score,
       connected: p.connected,
+      teamId: room.team.enabled ? p.teamId : null,
     })),
+    groupCode: room.groupCode,
+    team: serializeTeam(room),
+    finalResult: room.status === 'finished' ? room.finalResult : null,
     hasHost: !!room.hostSocket,
     bounds: MAP_BOUNDS,
     zones: ZONES,
@@ -423,6 +445,128 @@ export function serializeRoom(room) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 당일 내기 팀 대결
+// ---------------------------------------------------------------------------
+
+export function activeTeamIds(room) {
+  return TEAM_DEFS.slice(0, room.team.count).map((t) => t.id);
+}
+
+function teamSizes(room) {
+  const sizes = new Map(activeTeamIds(room).map((id) => [id, 0]));
+  for (const p of room.players.values()) {
+    if (sizes.has(p.teamId)) sizes.set(p.teamId, sizes.get(p.teamId) + 1);
+  }
+  return sizes;
+}
+
+function smallestTeamId(room) {
+  let best = null;
+  for (const [id, size] of teamSizes(room)) {
+    if (best === null || size < best.size) best = { id, size };
+  }
+  return best ? best.id : null;
+}
+
+function shuffle(list) {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// 균형 랜덤 나누기: 섞은 뒤 한 명씩 돌아가며 배정 → 팀 인원 차이는 최대 1명.
+// 어느 팀이 한 명 더 받을지도 매번 달라지도록 팀 순서도 섞는다.
+export function autoSplitTeams(room) {
+  const ids = shuffle(activeTeamIds(room));
+  shuffle([...room.players.values()]).forEach((p, i) => {
+    p.teamId = ids[i % ids.length];
+  });
+}
+
+export function setTeamMode(room, { enabled, count, bonus } = {}) {
+  if (room.status !== 'lobby' && room.status !== 'finished') {
+    throw new Error('팀 설정은 게임 시작 전에만 바꿀 수 있어요.');
+  }
+  const t = room.team;
+  const prevCount = t.count;
+  if (count !== undefined) t.count = clamp(Math.round(Number(count)) || 2, 2, TEAM_DEFS.length);
+  if (bonus !== undefined) t.bonus = clamp(Math.round(Number(bonus)) || 0, 0, MAX_TEAM_BONUS);
+  const wasEnabled = t.enabled;
+  if (enabled !== undefined) t.enabled = !!enabled;
+  if (t.enabled && (!wasEnabled || t.count !== prevCount)) autoSplitTeams(room);
+  if (!t.enabled) for (const p of room.players.values()) p.teamId = null;
+}
+
+export function assignTeam(room, playerId, teamId) {
+  if (!room.team.enabled) throw new Error('팀 대결이 꺼져 있어요.');
+  if (room.status !== 'lobby' && room.status !== 'finished') {
+    throw new Error('팀은 게임 시작 전에만 바꿀 수 있어요.');
+  }
+  const player = room.players.get(playerId);
+  if (!player) throw new Error('참가자를 찾을 수 없어요.');
+  if (!activeTeamIds(room).includes(teamId)) throw new Error('없는 팀이에요.');
+  player.teamId = teamId;
+}
+
+// 팀 점수 = 팀원 정답 수의 평균(소수 2자리). 인원이 달라도 공평하도록
+// 승패는 평균으로 가린다. 합계도 함께 보여 준다. 팀원이 없는 팀은 제외.
+export function teamStandings(room) {
+  return TEAM_DEFS.slice(0, room.team.count)
+    .map((def) => {
+      const members = [...room.players.values()].filter((p) => p.teamId === def.id);
+      const total = members.reduce((s, p) => s + p.score, 0);
+      return {
+        id: def.id,
+        name: def.name,
+        color: def.color,
+        size: members.length,
+        total,
+        average: members.length ? Math.round((total / members.length) * 100) / 100 : 0,
+      };
+    });
+}
+
+function serializeTeam(room) {
+  if (!room.team.enabled) return { enabled: false, count: room.team.count, bonus: room.team.bonus, teams: [] };
+  return { enabled: true, count: room.team.count, bonus: room.team.bonus, teams: teamStandings(room) };
+}
+
+// 게임 종료 시 결과 요약을 만든다 (기록 저장은 index.js 에서).
+// - MVP: 최고 득점자(들), 0점이면 없음
+// - 팀 승패: 평균이 가장 높은 팀이 이긴 팀. 동률이면 공동 우승(무승부),
+//   모든 팀이 동률이면 진 팀 없음.
+export function buildFinalResult(room) {
+  const players = [...room.players.values()];
+  const top = Math.max(0, ...players.map((p) => p.score));
+  const mvpIds = top > 0 ? players.filter((p) => p.score === top).map((p) => p.id) : [];
+  let team = null;
+  if (room.team.enabled) {
+    const teams = teamStandings(room).filter((t) => t.size > 0);
+    if (teams.length >= 2) {
+      const best = Math.max(...teams.map((t) => t.average));
+      const winnerTeamIds = teams.filter((t) => t.average === best).map((t) => t.id);
+      team = {
+        teams,
+        winnerTeamIds,
+        loserTeamIds: teams.filter((t) => t.average !== best).map((t) => t.id),
+        tie: winnerTeamIds.length > 1,
+        bonus: room.team.bonus,
+      };
+    }
+  }
+  return {
+    totalQuestions: room.questions.length,
+    mvpIds,
+    team,
+    awards: [], // 반이 연결돼 있으면 index.js 가 채운다
+    recorded: false,
+  };
+}
+
 export function serializeRoomSummary(room) {
   return {
     id: room.id,
@@ -432,5 +576,7 @@ export function serializeRoomSummary(room) {
     capacity: room.capacity,
     playerCount: room.players.size,
     status: room.status,
+    groupCode: room.groupCode,
+    teamMode: room.team.enabled,
   };
 }

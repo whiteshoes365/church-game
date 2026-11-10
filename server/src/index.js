@@ -24,7 +24,20 @@ import {
   serializePositions,
   allRooms,
   PHYSICS_TICK_MS,
+  setTeamMode,
+  autoSplitTeams,
+  assignTeam,
+  buildFinalResult,
 } from './state.js';
+import {
+  openGroup,
+  normalizeCode,
+  markAttendance,
+  unmarkAttendance,
+  adjustTalent,
+  recordGame,
+  groupSummary,
+} from './records.js';
 
 const PORT = Number(process.env.PORT) || 8787;
 const POSITIONS_BROADCAST_MS = 80; // ~12.5 Hz, within the 10-15 Hz target
@@ -55,6 +68,102 @@ function broadcastRoom(room) {
   for (const s of sockets) send(s, 'roomState', { room: snapshot });
 }
 
+// ---------------------------------------------------------------------------
+// 반(그룹) 기록: 교사 PIN 으로 인증된 소켓만 조회/수정할 수 있다.
+// ---------------------------------------------------------------------------
+const groupWatchers = new Map(); // code -> Set<socket>
+const pinFailures = new Map(); // code -> { fails, lockedUntil }
+const PIN_MAX_FAILS = 5;
+const PIN_LOCK_MS = 60000;
+
+function authGroup(socket, code, pin, create) {
+  const c = normalizeCode(code);
+  const f = pinFailures.get(c);
+  if (f && f.lockedUntil > Date.now()) throw new Error('PIN을 여러 번 틀렸어요. 1분 뒤에 다시 시도해 주세요.');
+  let result;
+  try {
+    result = openGroup(c, pin, { create: !!create });
+  } catch (err) {
+    if (/PIN이 맞지/.test(err.message)) {
+      const next = { fails: (f?.fails || 0) + 1, lockedUntil: 0 };
+      if (next.fails >= PIN_MAX_FAILS) {
+        next.fails = 0;
+        next.lockedUntil = Date.now() + PIN_LOCK_MS;
+      }
+      pinFailures.set(c, next);
+    }
+    throw err;
+  }
+  pinFailures.delete(c);
+  socket.groupAuth.add(c);
+  if (!groupWatchers.has(c)) groupWatchers.set(c, new Set());
+  groupWatchers.get(c).add(socket);
+  return { code: c, created: result.created };
+}
+
+function requireGroupAuth(socket, code) {
+  const c = normalizeCode(code);
+  if (!socket.groupAuth.has(c)) throw new Error('교사 PIN 확인이 필요해요.');
+  return c;
+}
+
+function pushGroup(code) {
+  const watchers = groupWatchers.get(code);
+  if (!watchers || watchers.size === 0) return;
+  const group = groupSummary(code);
+  for (const s of watchers) send(s, 'groupData', { group });
+}
+
+function markRoomAttendance(room, player) {
+  if (!room.groupCode) return null;
+  try {
+    return markAttendance(room.groupCode, { nickname: player.nickname, avatar: player.avatar });
+  } catch (err) {
+    console.error('[records] 출석 기록 실패:', err.message);
+    return null;
+  }
+}
+
+// 게임이 끝나는 순간 한 번만 호출: 결과 요약(MVP·팀 승패)을 만들고,
+// 반이 연결돼 있으면 달란트를 원장에 기록한다.
+function finalizeGame(room) {
+  if (room.status !== 'finished' || room.finalResult || room.questions.length === 0) return;
+  const result = buildFinalResult(room);
+  room.finalResult = result;
+  if (!room.groupCode || room.players.size === 0) return;
+  try {
+    const players = [...room.players.values()];
+    const { awards } = recordGame(room.groupCode, {
+      roomTitle: room.title,
+      level: room.level,
+      totalQuestions: result.totalQuestions,
+      players: players.map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, score: p.score, teamId: room.team.enabled ? p.teamId : null })),
+      mvpNicknames: players.filter((p) => result.mvpIds.includes(p.id)).map((p) => p.nickname),
+      team: result.team
+        ? {
+            bonus: result.team.bonus,
+            tie: result.team.tie,
+            teams: result.team.teams,
+            winnerTeamIds: result.team.winnerTeamIds,
+            names: Object.fromEntries(result.team.teams.map((t) => [t.id, t.name])),
+          }
+        : null,
+    });
+    result.awards = awards;
+    result.recorded = true;
+    pushGroup(room.groupCode);
+  } catch (err) {
+    console.error('[records] 게임 기록 실패:', err.message);
+  }
+}
+
+function linkRoomToGroup(socket, room, code, pin) {
+  const c = pin ? authGroup(socket, code, pin, false).code : requireGroupAuth(socket, code);
+  room.groupCode = c;
+  for (const p of room.players.values()) markRoomAttendance(room, p);
+  pushGroup(c);
+}
+
 function onQuestionTimeout(room) {
   revealAnswer(room);
   broadcastRoom(room);
@@ -78,6 +187,7 @@ setInterval(() => {
 
 wss.on('connection', (socket) => {
   socket.meta = { roomId: null, deviceId: null, role: null };
+  socket.groupAuth = new Set(); // 이 소켓이 교사 PIN 으로 연 반 코드들
 
   socket.on('message', (raw) => {
     let msg;
@@ -95,6 +205,7 @@ wss.on('connection', (socket) => {
   });
 
   socket.on('close', () => {
+    for (const c of socket.groupAuth) groupWatchers.get(c)?.delete(socket);
     const { roomId, deviceId, role } = socket.meta;
     if (!roomId) return;
     const room = getRoom(roomId);
@@ -143,6 +254,15 @@ function handleMessage(socket, msg) {
       });
       room.hostSocket = socket;
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
+      if (msg.groupCode) {
+        // 반 연결에 실패해도(PIN 오류 등) 방은 그대로 만들고 이유만 알려 준다.
+        try {
+          linkRoomToGroup(socket, room, msg.groupCode, msg.groupPin);
+        } catch (err) {
+          send(socket, 'error', { message: `반 연결 실패: ${err.message}` });
+        }
+      }
+      if (msg.teamMode) setTeamMode(room, { enabled: true, count: msg.teamCount, bonus: msg.teamBonus });
       send(socket, 'roomCreated', { room: serializeRoom(room) });
       break;
     }
@@ -166,8 +286,10 @@ function handleMessage(socket, msg) {
       });
       player.socket = socket;
       socket.meta = { roomId: room.id, deviceId: msg.deviceId, role: 'player' };
-      send(socket, 'joined', { playerId: player.id, room: serializeRoom(room) });
+      const attendance = markRoomAttendance(room, player);
+      send(socket, 'joined', { playerId: player.id, room: serializeRoom(room), attendance });
       broadcastRoom(room);
+      if (attendance) pushGroup(room.groupCode);
       break;
     }
 
@@ -175,6 +297,7 @@ function handleMessage(socket, msg) {
       const room = requireHostRoom(socket, msg.roomId);
       startQuiz(room, msg.questionCount);
       advanceQuestion(room, onQuestionTimeout);
+      finalizeGame(room);
       broadcastRoom(room);
       break;
     }
@@ -217,8 +340,65 @@ function handleMessage(socket, msg) {
 
     case 'nextQuestion': {
       const room = requireHostRoom(socket, msg.roomId);
+      if (room.status === 'finished') break; // 이미 끝난 게임 (중복 클릭 방지)
       advanceQuestion(room, onQuestionTimeout);
+      finalizeGame(room);
       broadcastRoom(room);
+      break;
+    }
+
+    // ---- 팀 대결 (호스트 전용) ----
+    case 'setTeamMode': {
+      const room = requireHostRoom(socket, msg.roomId);
+      setTeamMode(room, { enabled: msg.enabled, count: msg.count, bonus: msg.bonus });
+      broadcastRoom(room);
+      break;
+    }
+
+    case 'autoSplitTeams': {
+      const room = requireHostRoom(socket, msg.roomId);
+      if (!room.team.enabled) throw new Error('팀 대결이 꺼져 있어요.');
+      if (room.status !== 'lobby' && room.status !== 'finished') throw new Error('팀은 게임 시작 전에만 바꿀 수 있어요.');
+      autoSplitTeams(room);
+      broadcastRoom(room);
+      break;
+    }
+
+    case 'assignTeam': {
+      const room = requireHostRoom(socket, msg.roomId);
+      assignTeam(room, msg.playerId, msg.teamId);
+      broadcastRoom(room);
+      break;
+    }
+
+    // ---- 반(그룹) 출석 · 달란트 (교사 PIN) ----
+    case 'groupOpen': {
+      const { code, created } = authGroup(socket, msg.code, msg.pin, msg.create);
+      send(socket, 'groupData', { group: groupSummary(code), created });
+      break;
+    }
+
+    case 'linkGroup': {
+      const room = requireHostRoom(socket, msg.roomId);
+      if (room.status !== 'lobby' && room.status !== 'finished') throw new Error('반 연결은 게임 시작 전에만 바꿀 수 있어요.');
+      if (msg.code) linkRoomToGroup(socket, room, msg.code, msg.pin);
+      else room.groupCode = null;
+      broadcastRoom(room);
+      break;
+    }
+
+    case 'groupAdjust': {
+      const code = requireGroupAuth(socket, msg.code);
+      adjustTalent(code, { nickname: msg.nickname, delta: msg.delta, reason: msg.reason });
+      pushGroup(code);
+      break;
+    }
+
+    case 'groupMarkAttendance': {
+      const code = requireGroupAuth(socket, msg.code);
+      if (msg.present === false) unmarkAttendance(code, { nickname: msg.nickname });
+      else markAttendance(code, { nickname: msg.nickname, via: 'teacher' });
+      pushGroup(code);
       break;
     }
 

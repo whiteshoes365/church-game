@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import type { Capacity, Level, MapTheme, RoomSummary } from '../protocol';
+import { loadGroupSession } from '../groupSession';
 import { DEFAULT_LEVEL, LEVEL_CLASS, LEVEL_LABELS, LEVEL_OPTIONS } from '../levels';
 
 const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
@@ -30,6 +31,9 @@ export function HostRooms() {
   const [capacity, setCapacity] = useState<Capacity>(8);
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
   const [questionCount, setQuestionCount] = useState<number>(30);
+  const session = loadGroupSession();
+  const [useGroup, setUseGroup] = useState<boolean>(!!session);
+  const [teamMode, setTeamMode] = useState(false);
 
   useEffect(() => {
     gameSocket.connect();
@@ -50,7 +54,16 @@ export function HostRooms() {
 
   function createRoom() {
     if (!title.trim()) return;
-    gameSocket.send('createRoom', { churchId, title: title.trim(), map, capacity, level, questionCount });
+    gameSocket.send('createRoom', {
+      churchId,
+      title: title.trim(),
+      map,
+      capacity,
+      level,
+      questionCount,
+      teamMode,
+      ...(useGroup && session ? { groupCode: session.code, groupPin: session.pin } : {}),
+    });
   }
 
   return (
@@ -107,6 +120,19 @@ export function HostRooms() {
                 {n}문제
               </button>
             ))}
+          </div>
+          <p className="picker-label">더 재미있게</p>
+          <div className="row">
+            <button type="button" className={`btn btn-sm ${teamMode ? 'btn-primary' : ''}`} onClick={() => setTeamMode((v) => !v)}>
+              팀 대결 {teamMode ? '켜짐' : '꺼짐'}
+            </button>
+            {session ? (
+              <button type="button" className={`btn btn-sm ${useGroup ? 'btn-primary' : ''}`} onClick={() => setUseGroup((v) => !v)}>
+                {session.code} 반 출석·달란트 {useGroup ? '기록' : '안 함'}
+              </button>
+            ) : (
+              <span className="fine-print">출석·달란트 기록은 호스트 홈에서 반을 먼저 열어 주세요.</span>
+            )}
           </div>
           <button className="btn btn-primary" onClick={createRoom} disabled={!title.trim()}>
             방 만들기

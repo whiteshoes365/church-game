@@ -148,6 +148,7 @@ export function PlayerRoom() {
   const avatar = useMemo(() => encodeAvatar(avatarConfig), [avatarConfig]);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [attendance, setAttendance] = useState<{ streak: number; streakBonus: number } | null>(null);
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
   useEffect(() => {
@@ -155,6 +156,7 @@ export function PlayerRoom() {
     const offJoined = gameSocket.on('joined', (msg) => {
       setJoined(true);
       setRoom(msg.room);
+      if (msg.attendance) setAttendance(msg.attendance);
     });
     const offState = gameSocket.on('roomState', (msg) => {
       if (msg.room.id === roomId) setRoom(msg.room);
@@ -271,6 +273,27 @@ export function PlayerRoom() {
       <div className="screen-narrow stack">
         <h1 className="title">{room.title}</h1>
 
+        {(() => {
+          const myTeam = room.team?.enabled ? room.team.teams.find((t) => t.id === me?.teamId) : undefined;
+          if (!myTeam && !attendance) return null;
+          return (
+            <div className="player-chips">
+              {myTeam && (
+                <span className="team-chip" style={{ background: myTeam.color }}>
+                  우리 팀: {myTeam.name}
+                  {room.status !== 'lobby' && ` · 평균 ${myTeam.average}`}
+                </span>
+              )}
+              {attendance && (
+                <span className="team-chip attend-chip">
+                  출석 완료{attendance.streak >= 2 ? ` · ${attendance.streak}주 연속!` : ''}
+                  {attendance.streakBonus > 0 ? ` +${attendance.streakBonus} 달란트` : ''}
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {room.status === 'lobby' && (
           <div className="card">
             <p className="subtitle">선생님이 퀴즈를 시작하면 바로 알려드려요. 잠시만 기다려주세요!</p>
@@ -338,6 +361,29 @@ export function PlayerRoom() {
           <div className="card stack">
             <h2 className="title">퀴즈 종료!</h2>
             <p>내 최종 점수: {me?.score ?? 0}점</p>
+            {room.finalResult?.team &&
+              me?.teamId &&
+              (() => {
+                const fr = room.finalResult!.team!;
+                const mine = fr.teams.find((t) => t.id === me.teamId);
+                if (!mine) return null;
+                const won = fr.winnerTeamIds.includes(mine.id);
+                return (
+                  <p className="player-team-result" style={{ borderColor: mine.color }}>
+                    <span className="team-dot" style={{ background: mine.color }} />
+                    {mine.name} {won ? (fr.tie ? '무승부!' : '승리!') : '아쉽지만 잘했어요!'}
+                  </p>
+                );
+              })()}
+            {(() => {
+              const award = room.finalResult?.awards.find((a) => a.id === me?.id);
+              if (!award) return null;
+              return (
+                <p className="player-award">
+                  달란트 +{award.delta} <small>({award.parts.map((x) => `${x.reason} +${x.delta}`).join(', ')})</small>
+                </p>
+              );
+            })()}
             <div className="stack">
               {[...room.players]
                 .sort((a, b) => b.score - a.score)
