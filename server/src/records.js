@@ -1,14 +1,16 @@
 // 반(그룹)별 출석 · 달란트 기록 저장소.
 //
-// - 저장 위치: server/data/church-records/<반코드>.json (RECORDS_DIR 로 변경 가능, gitignore).
+// - 운영: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY 가 있으면 Supabase 에 저장해요.
+// - 로컬/검증: 그 변수가 없으면 server/data/church-records/<반코드>.json (RECORDS_DIR 로 변경 가능, gitignore).
 // - 개인정보 최소화: 닉네임(+블록 아바타 문자열)만 저장해요. 실명/전화/생일 없음.
-// - 쓰기는 임시 파일에 쓴 뒤 rename 하는 원자적 쓰기.
+// - 파일 쓰기는 임시 파일에 쓴 뒤 rename 하는 원자적 쓰기.
 // - 교사 전용 동작은 반마다 정한 교사 PIN(scrypt 해시로만 저장)으로 보호해요.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { SHOP_ITEMS, getShopItem } from './shop.js';
+import * as supabaseRecords from './supabaseRecords.js';
 
 const DEFAULT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data/church-records');
 
@@ -112,27 +114,14 @@ function hashPin(pin, salt) {
   return scryptSync(pin, salt, 32).toString('hex');
 }
 
-// ---- 파일 입출력 ----
+// ---- 입출력: Supabase(운영) 또는 로컬 JSON 파일(검증/개발) ----
 const cache = new Map(); // code -> group
 
 function fileFor(code) {
   return path.join(recordsDir(), `${code}.json`);
 }
 
-function saveGroup(group) {
-  const dir = recordsDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const file = fileFor(group.code);
-  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(group, null, 1));
-  fs.renameSync(tmp, file); // 같은 디렉터리 안 rename = 원자적 교체
-}
-
-function loadGroup(code) {
-  if (cache.has(code)) return cache.get(code);
-  const file = fileFor(code);
-  if (!fs.existsSync(file)) return null;
-  const group = JSON.parse(fs.readFileSync(file, 'utf8'));
+function normalizeLoadedGroup(group) {
   group.members ||= {};
   group.ledger ||= [];
   group.games ||= [];
@@ -145,6 +134,40 @@ function loadGroup(code) {
     delete group.members[oldKey];
     for (const e of group.ledger) if (e.key === oldKey) e.key = key;
   }
+  return group;
+}
+
+function saveGroupFile(group) {
+  const dir = recordsDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const file = fileFor(group.code);
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(group, null, 1));
+  fs.renameSync(tmp, file); // 같은 디렉터리 안 rename = 원자적 교체
+}
+
+function loadGroupFile(code) {
+  const file = fileFor(code);
+  if (!fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function saveGroup(group) {
+  cache.set(group.code, group);
+  if (supabaseRecords.supabaseEnabled()) {
+    supabaseRecords.saveClass(group);
+    return;
+  }
+  saveGroupFile(group);
+}
+
+function loadGroup(code) {
+  if (cache.has(code)) return cache.get(code);
+  const raw = supabaseRecords.supabaseEnabled()
+    ? supabaseRecords.loadClass(code)
+    : loadGroupFile(code);
+  if (!raw) return null;
+  const group = normalizeLoadedGroup(raw);
   cache.set(code, group);
   return group;
 }

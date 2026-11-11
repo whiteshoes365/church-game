@@ -1,5 +1,13 @@
 # RESULT
 
+## Supabase 기록 저장 (2026-11-11)
+
+- 운영 기록은 무료 플랜 기존 프로젝트 `worship-song-tuner`(`dilqbdgzzgrhstcytonl`)에 저장합니다. 이미 활성 프로젝트가 2개라 새 프로젝트는 만들지 않았습니다.
+- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`가 있으면 Supabase, 없으면 로컬 JSON(기존 `npm run verify` 경로).
+- 테이블: `church_classes`(원본 문서) + `church_members` / `church_attendance` / `church_talent_ledger` / `church_shop_items` / `church_games`. RLS 켜짐, 정책 없음, anon/authenticated 권한 없음.
+- 실제 DB 검사: `npm run verify:supabase` (끝나면 테스트 행 삭제).
+
+
 ## 홈 화면 달란트 상점 · 진행자 비밀번호 분리 · 대기실 다리 잘림 수정 (2026-11-11)
 
 - **커밋**: `3febe78` (branch `wip/fun-features`, 이전 기능 커밋 `ed7a345`). push·배포는 하지 않았습니다. `퀴즈검토_176문제.xlsx`는 건드리지 않았습니다.
