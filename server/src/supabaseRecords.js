@@ -20,16 +20,18 @@ function request({ method, path, body }) {
     for await (const c of process.stdin) chunks.push(c);
     const { method, url, body } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const headers = {
+      apikey: key,
+      'Content-Type': 'application/json',
+      'Accept-Profile': 'church_game',
+      'Content-Profile': 'church_game',
+      Prefer: 'return=representation,resolution=merge-duplicates',
+    };
+    // Legacy JWT service_role keys need Authorization; new sb_secret_ keys must be apikey only.
+    if (typeof key === 'string' && key.startsWith('eyJ')) headers.Authorization = 'Bearer ' + key;
     const res = await fetch(url, {
       method,
-      headers: {
-        apikey: key,
-        Authorization: 'Bearer ' + key,
-        'Content-Type': 'application/json',
-        'Accept-Profile': 'church_game',
-        'Content-Profile': 'church_game',
-        Prefer: 'return=representation,resolution=merge-duplicates',
-      },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
