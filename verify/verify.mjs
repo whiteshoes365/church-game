@@ -597,6 +597,15 @@ async function main() {
     const wrong1 = opposite(correct1);
     log(`movement round 1: "${q1.room.question.text}" (정답: ${correct1})`);
 
+    // 플레이어 폰도 지도에 캐릭터를 그릴 수 있도록, 문제 진행 중에는 플레이어 소켓도 positions 를 받아야 함
+    for (const [client, id] of [[m1, 'device-m1'], [m2, 'device-m2'], [m3, 'device-m3']]) {
+      const playerPositions = await client.waitFor('positions', (m) => m.roomId === roomId2);
+      const self = playerPositions.players.find((p) => p.id === id);
+      assert(self && typeof self.x === 'number' && typeof self.z === 'number', `${id} 플레이어 소켓이 자기 좌표가 담긴 positions 를 받아야 함`);
+      assert(playerPositions.players.length === 3, '플레이어가 받는 positions 에도 방의 모든 플레이어가 들어 있어야 함');
+    }
+    log('player sockets receive positions during a question');
+
     // m1은 입력으로 걸어서 정답 구역으로, m2는 오답 구역으로, m3는 가만히 있어서 두 구역 밖에 남음
     await moveIntoZone(host2, roomId2, m1, 'device-m1', ZONES[correct1]);
     const m1Pos = await freshPosition(host2, roomId2, 'device-m1');

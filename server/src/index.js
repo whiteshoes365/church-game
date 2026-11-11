@@ -269,8 +269,9 @@ function onQuestionTimeout(room) {
 
 // Authoritative movement simulation ticks for every room all the time (cheap
 // even with many rooms), but the compact position broadcast is only sent to
-// rooms that are actually "in play" (question/reveal) and have a host
-// watching, to keep bandwidth down.
+// rooms that are actually "in play" (question/reveal). It goes to the host
+// screen and to every connected player (their phone draws a top-down map of
+// the same coordinates), so a host does not need to be present.
 setInterval(() => {
   for (const room of allRooms()) tickRoomPhysics(room, PHYSICS_TICK_MS);
 }, PHYSICS_TICK_MS);
@@ -278,8 +279,15 @@ setInterval(() => {
 setInterval(() => {
   for (const room of allRooms()) {
     if (room.status !== 'question' && room.status !== 'reveal') continue;
-    if (!room.hostSocket) continue;
-    send(room.hostSocket, 'positions', { roomId: room.id, players: serializePositions(room) });
+    const targets = [];
+    if (room.hostSocket) targets.push(room.hostSocket);
+    for (const player of room.players.values()) {
+      if (player.socket && player.socket !== room.hostSocket) targets.push(player.socket);
+    }
+    const open = targets.filter((s) => s.readyState === s.OPEN);
+    if (open.length === 0) continue;
+    const data = JSON.stringify({ type: 'positions', roomId: room.id, players: serializePositions(room) });
+    for (const s of open) s.send(data);
   }
 }, POSITIONS_BROADCAST_MS);
 

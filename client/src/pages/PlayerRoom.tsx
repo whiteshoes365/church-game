@@ -1,12 +1,13 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { getDeviceId } from '../deviceId';
 import { BODY_COLORS, DEFAULT_AVATAR_CONFIG, HATS, SKIN_TONES, encodeAvatar, type AvatarConfig } from '../avatars';
 import { AvatarIcon } from '../components/AvatarIcon';
 import { isWebGLAvailable } from '../three/webgl';
-import type { RoomSnapshot } from '../protocol';
+import type { PlayerPosition, RoomSnapshot } from '../protocol';
+import { PlayerMap } from '../components/PlayerMap';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 import { ShopPanel } from '../components/ShopPanel';
 
@@ -14,35 +15,44 @@ const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
 const QUESTION_DURATION_MS = 15000;
 const MOVE_SEND_INTERVAL_MS = 83; // ~12 Hz, as specified for the input throttle
-const JOYSTICK_RADIUS = 52;
+const JOYSTICK_MAX_RADIUS = 52;
 
 function Joystick({ onChange }: { onChange: (dir: { x: number; z: number }) => void }) {
   const baseRef = useRef<HTMLDivElement>(null);
-  const draggingRef = useRef(false);
+  const pointerIdRef = useRef<number | null>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
 
   function updateFromEvent(e: ReactPointerEvent<HTMLDivElement>) {
     const base = baseRef.current;
     if (!base) return;
     const rect = base.getBoundingClientRect();
+    // The base is smaller on phones, so the travel radius follows its real size.
+    const radius = Math.min(JOYSTICK_MAX_RADIUS, rect.width / 2 - 14);
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
     let dx = e.clientX - cx;
     let dy = e.clientY - cy;
     const dist = Math.hypot(dx, dy);
-    if (dist > JOYSTICK_RADIUS) {
-      dx = (dx / dist) * JOYSTICK_RADIUS;
-      dy = (dy / dist) * JOYSTICK_RADIUS;
+    if (dist > radius) {
+      dx = (dx / dist) * radius;
+      dy = (dy / dist) * radius;
     }
     setKnob({ x: dx, y: dy });
-    onChange({ x: dx / JOYSTICK_RADIUS, z: dy / JOYSTICK_RADIUS });
+    onChange({ x: dx / radius, z: dy / radius });
   }
 
-  function release() {
-    draggingRef.current = false;
+  // Released only by pointerup/pointercancel of the finger that started the
+  // drag. The base holds pointer capture, so the drag keeps tracking even when
+  // the finger slides far outside the circle (no pointerleave release).
+  function release(e: ReactPointerEvent<HTMLDivElement>) {
+    if (pointerIdRef.current !== e.pointerId) return;
+    pointerIdRef.current = null;
     setKnob({ x: 0, y: 0 });
     onChange({ x: 0, z: 0 });
   }
+
+  // If the controls unmount mid-drag (question ends), stop moving.
+  useEffect(() => () => onChange({ x: 0, z: 0 }), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div
@@ -50,30 +60,31 @@ function Joystick({ onChange }: { onChange: (dir: { x: number; z: number }) => v
       className="joystick-base"
       onPointerDown={(e) => {
         e.preventDefault();
-        draggingRef.current = true;
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        if (pointerIdRef.current !== null) return;
+        pointerIdRef.current = e.pointerId;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* capture is best-effort */
+        }
         updateFromEvent(e);
       }}
       onPointerMove={(e) => {
-        if (!draggingRef.current) return;
+        if (pointerIdRef.current !== e.pointerId) return;
         e.preventDefault();
         updateFromEvent(e);
       }}
-      onPointerUp={(e) => {
-        e.preventDefault();
-        release();
-      }}
+      onPointerUp={release}
       onPointerCancel={release}
-      onPointerLeave={() => {
-        if (draggingRef.current) release();
-      }}
+      onLostPointerCapture={release}
+      onContextMenu={(e) => e.preventDefault()}
     >
       <div className="joystick-knob" style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} />
     </div>
   );
 }
 
-function MovementControls({ roomId }: { roomId?: string }) {
+function MovementControls({ roomId, children }: { roomId?: string; children?: ReactNode }) {
   const dirRef = useRef({ x: 0, z: 0 });
   const runRef = useRef(false);
   const crawlRef = useRef(false);
@@ -95,7 +106,9 @@ function MovementControls({ roomId }: { roomId?: string }) {
   return (
     <div className="movement-controls">
       <Joystick onChange={(dir) => { dirRef.current = dir; }} />
-      <div className="action-buttons">
+      <div className="controls-side">
+        {children}
+        <div className="action-buttons">
         <button
           type="button"
           className="action-btn jump-btn"
@@ -111,13 +124,16 @@ function MovementControls({ roomId }: { roomId?: string }) {
           className={`action-btn run-btn ${running ? 'active' : ''}`}
           onPointerDown={(e) => {
             e.preventDefault();
+            try {
+              e.currentTarget.setPointerCapture(e.pointerId);
+            } catch {
+              /* best-effort */
+            }
             setRun(true);
           }}
           onPointerUp={() => setRun(false)}
           onPointerCancel={() => setRun(false)}
-          onPointerLeave={() => {
-            if (runRef.current) setRun(false);
-          }}
+          onLostPointerCapture={() => setRun(false)}
         >
           달리기
         </button>
@@ -132,6 +148,7 @@ function MovementControls({ roomId }: { roomId?: string }) {
         >
           기어가기
         </button>
+        </div>
       </div>
     </div>
   );
@@ -143,6 +160,7 @@ export function PlayerRoom() {
   const deviceId = useMemo(() => getDeviceId(), []);
 
   const [room, setRoom] = useState<RoomSnapshot | null>(null);
+  const [positions, setPositions] = useState<Record<string, PlayerPosition>>({});
   const [joined, setJoined] = useState(false);
   const [nickname, setNickname] = useState('');
   const [pin, setPin] = useState('');
@@ -166,7 +184,14 @@ export function PlayerRoom() {
       if (msg.room.id === roomId) setRoom(msg.room);
     });
     const offError = gameSocket.on('error', (msg) => setError(msg.message));
+    const offPositions = gameSocket.on('positions', (msg) => {
+      if (msg.roomId !== roomId) return;
+      const next: Record<string, PlayerPosition> = {};
+      for (const p of msg.players as PlayerPosition[]) next[p.id] = p;
+      setPositions(next);
+    });
     return () => {
+      offPositions();
       offJoined();
       offState();
       offError();
@@ -290,9 +315,10 @@ export function PlayerRoom() {
 
   const me = room.players.find((p) => p.id === deviceId);
   const answered = !!me?.side && room.status === 'question';
+  const playing = room.status === 'question' && !!room.question;
 
   return (
-    <div className="screen">
+    <div className={`screen ${playing ? 'play-screen' : ''}`}>
       <div className="screen-narrow stack">
         <h1 className="title">{room.title}</h1>
 
@@ -331,39 +357,56 @@ export function PlayerRoom() {
         )}
 
         {room.status === 'question' && room.question && (
-          <div className="card stack">
-            <span className="badge">
-              문제 {room.question.index + 1} / {room.question.total}
-            </span>
-            {room.question.category && (
-              <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>
-                {CATEGORY_LABELS[room.question.category]}
-              </span>
-            )}
-            <p className="question-text">{room.question.text}</p>
-            <div className="timer-bar">
-              <div
-                className="timer-bar-fill"
-                style={{
-                  width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / QUESTION_DURATION_MS) * 100))}%`,
-                }}
-              />
+          <>
+            <div className="card play-question">
+              <div className="play-question-badges">
+                <span className="badge">
+                  문제 {room.question.index + 1} / {room.question.total}
+                </span>
+                {room.question.category && (
+                  <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>
+                    {CATEGORY_LABELS[room.question.category]}
+                  </span>
+                )}
+              </div>
+              <p className="question-text">{room.question.text}</p>
+              <div className="timer-bar">
+                <div
+                  className="timer-bar-fill"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / QUESTION_DURATION_MS) * 100))}%`,
+                  }}
+                />
+              </div>
             </div>
-            <MovementControls roomId={roomId} />
 
-            <p className="picker-label" style={{ textAlign: 'center' }}>
-              O/X 버튼을 누르면 캐릭터가 알아서 걸어가요
+            <PlayerMap
+              className="player-map-fill"
+              bounds={room.bounds}
+              zones={room.zones}
+              players={room.players}
+              positions={positions}
+              meId={deviceId}
+              onPickZone={answered ? undefined : answer}
+            />
+
+            <p className="play-hint">
+              {answered
+                ? '선택 완료! 조이스틱으로 자리를 옮길 수도 있어요.'
+                : '지도의 O/X 를 누르면 걸어가요. 조이스틱으로 직접 움직여도 돼요.'}
             </p>
-            <div className="ox-buttons">
-              <button className="ox-button o" disabled={answered} onClick={() => answer('O')}>
-                O
-              </button>
-              <button className="ox-button x" disabled={answered} onClick={() => answer('X')}>
-                X
-              </button>
-            </div>
-            {answered && <p className="subtitle">선택 완료! 정답 발표를 기다려주세요.</p>}
-          </div>
+
+            <MovementControls roomId={roomId}>
+              <div className="ox-buttons">
+                <button className="ox-button o" disabled={answered} onClick={() => answer('O')}>
+                  O
+                </button>
+                <button className="ox-button x" disabled={answered} onClick={() => answer('X')}>
+                  X
+                </button>
+              </div>
+            </MovementControls>
+          </>
         )}
 
         {room.status === 'reveal' && room.lastResult && (
@@ -375,6 +418,14 @@ export function PlayerRoom() {
               </span>
             )}
             <div className="reveal-banner">정답은 {room.lastResult.correctAnswer} 예요!</div>
+            <PlayerMap
+              bounds={room.bounds}
+              zones={room.zones}
+              players={room.players}
+              positions={positions}
+              meId={deviceId}
+              correctAnswer={room.lastResult.correctAnswer}
+            />
             {room.lastResult.explanation && <p className="explanation-text">{room.lastResult.explanation}</p>}
             {me && (
               <p className={room.lastResult.correctPlayerIds.includes(me.id) ? 'result-correct' : 'result-wrong'}>
