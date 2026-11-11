@@ -7,7 +7,7 @@ import { QrCode } from '../components/QrCode';
 import { MusicPicker } from '../components/MusicPicker';
 import { PinDigits, QuestionBanners, ResultHud, ResultTeams, RoomStage, ScoreList, TeamBoard } from '../components/RoomStage';
 import { displayKeys, getHostKey, saveHostKey } from '../hostKeys';
-import { displayUrl, joinQrUrl, joinTextUrl, pairUrl } from '../joinLink';
+import { displayUrl, joinQrUrl, joinTextUrl, pairUrl, remoteUrl } from '../joinLink';
 import { LEVEL_CLASS, LEVEL_LABELS } from '../levels';
 import { music } from '../music';
 import type { Capacity, Level, MapTheme, PlayerPosition, RoomSnapshot } from '../protocol';
@@ -20,6 +20,15 @@ const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
   { value: 'playground', label: '운동장' },
   { value: 'forest', label: '숲' },
 ];
+
+const SETUP_AUTO_HIDE_MS = 45000;
+
+interface RemoteSetupCard {
+  roomId: string;
+  joinCode: string;
+  pin: string;
+  hostPassword: string;
+}
 
 export function DisplayRoom() {
   const { roomId: routeRoomId } = useParams<{ roomId?: string }>();
@@ -35,8 +44,11 @@ export function DisplayRoom() {
   const [map, setMap] = useState<MapTheme>('sanctuary');
   const [capacity, setCapacity] = useState<Capacity>(8);
   const [level, setLevel] = useState<Level>('elementary');
+  const [hostPasswordInput, setHostPasswordInput] = useState('');
   const [fullscreen, setFullscreen] = useState(false);
   const [qrHidden, setQrHidden] = useState(false);
+  const [setupCard, setSetupCard] = useState<RemoteSetupCard | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
   const activeRef = useRef<string | null>(routeRoomId ?? null);
   const now = useQuestionClock(room);
 
@@ -88,6 +100,16 @@ export function DisplayRoom() {
       if (msg.hostKey) saveHostKey(msg.room.id, msg.hostKey);
       setActiveRoomId(msg.room.id);
       activeRef.current = msg.room.id;
+      // 송출로 전환하기 전에 진행자 비밀번호·리모컨 안내를 잠깐 보여 준다 (프로젝터에 계속 두지 않음).
+      if (msg.room.hostPassword && msg.room.joinCode) {
+        setSetupCard({
+          roomId: msg.room.id,
+          joinCode: msg.room.joinCode,
+          pin: msg.room.pin ?? '',
+          hostPassword: msg.room.hostPassword,
+        });
+        setSetupOpen(true);
+      }
       gameSocket.send('displayOpen', { roomId: msg.room.id, hostKey: msg.hostKey });
       navigate(`/display/${msg.room.id}`, { replace: true });
       setCreating(false);
@@ -155,6 +177,13 @@ export function DisplayRoom() {
     return () => clearTimeout(id);
   }, [pairTtl, room, requestPair]);
 
+  // 리모컨 안내 카드는 잠깐만 보이고 자동으로 숨긴다 (프로젝터에 비밀번호가 남지 않게).
+  useEffect(() => {
+    if (!setupOpen || !setupCard) return;
+    const id = window.setTimeout(() => setSetupOpen(false), SETUP_AUTO_HIDE_MS);
+    return () => window.clearTimeout(id);
+  }, [setupOpen, setupCard]);
+
   function toggleFullscreen() {
     const el = document.documentElement;
     if (!document.fullscreenElement) el.requestFullscreen?.().catch(() => {});
@@ -162,6 +191,10 @@ export function DisplayRoom() {
   }
 
   function createRoomHere() {
+    if (hostPasswordInput && !/^[0-9A-Za-z]{4,12}$/.test(hostPasswordInput)) {
+      setError('진행자 비밀번호는 영문·숫자 4~12자로 정해 주세요. 비워 두면 자동으로 만들어요.');
+      return;
+    }
     setCreating(true);
     setError(null);
     const local = music.getState();
@@ -175,6 +208,7 @@ export function DisplayRoom() {
         capacity,
         level,
         questionCount: 10,
+        hostPassword: hostPasswordInput || undefined,
         music: { track: local.track, enabled: local.enabled, volume: local.volume },
       });
     });
@@ -255,11 +289,21 @@ export function DisplayRoom() {
                 </button>
               ))}
             </div>
+            <p className="picker-label">진행자 비밀번호 (선생님 폰 리모컨용, 영문·숫자 4~12자)</p>
+            <input
+              className="input host-pw-input"
+              type="password"
+              autoComplete="off"
+              placeholder="비워 두면 자동으로 만들어요"
+              maxLength={12}
+              value={hostPasswordInput}
+              onChange={(e) => setHostPasswordInput(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
+            />
             <MusicPicker preview />
             <button className="btn btn-primary" type="button" disabled={creating || !title.trim()} onClick={createRoomHere}>
               {creating ? '만드는 중…' : '방 만들고 송출 시작'}
             </button>
-            <p className="fine-print">방 PIN·진행자 비밀번호는 자동으로 만들어져요. 리모컨에서 확인하세요.</p>
+            <p className="fine-print">방을 만들면 진행자 비밀번호와 리모컨 QR을 잠깐 보여 준 뒤 숨겨요. 프로젝터에 계속 두지 마세요.</p>
           </section>
         </div>
         <p className="fine-print display-wait-foot">
@@ -269,8 +313,46 @@ export function DisplayRoom() {
     );
   }
 
+  const remUrl = setupCard ? remoteUrl({ joinCode: setupCard.joinCode, id: setupCard.roomId }) : room ? remoteUrl(room) : null;
+
   return (
     <div className={`display-screen host-screen host-room-screen ${fullscreen ? 'is-fullscreen' : ''}`}>
+      {setupOpen && setupCard && remUrl && (
+        <div className="display-setup-overlay" role="dialog" aria-label="리모컨 연결 안내">
+          <div className="display-setup-card card stack">
+            <h2 className="card-title">
+              <span className="title-block block-gold" aria-hidden />
+              폰 리모컨 연결 (잠깐만 보여요)
+            </h2>
+            <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>
+              선생님 휴대폰으로 아래 QR을 찍거나 주소를 연 뒤, 진행자 비밀번호를 입력하세요. 이 안내는 곧 자동으로 숨겨요.
+            </p>
+            <div className="display-setup-pw">
+              <span>진행자 비밀번호</span>
+              <b className="display-setup-pw-value">{setupCard.hostPassword}</b>
+            </div>
+            {setupCard.pin && (
+              <p className="fine-print">
+                방 PIN(학생용) <b>{setupCard.pin}</b> · 입장 코드 <b>{setupCard.joinCode}</b>
+              </p>
+            )}
+            <div className="pair-qr-wrap">
+              <QrCode value={remUrl} label="리모컨 QR" className="qr-pair" />
+              <p className="join-text-url">{displayUrl(remUrl)}</p>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" type="button" onClick={() => setSetupOpen(false)}>
+                숨기기
+              </button>
+              <a className="btn" href={`#/remote/${setupCard.joinCode}`} target="_blank" rel="noreferrer">
+                이 기기에서 리모컨 열기
+              </a>
+            </div>
+            <p className="fine-print">프로젝터에 비밀번호가 남지 않게, 확인한 뒤 바로 숨겨 주세요.</p>
+          </div>
+        </div>
+      )}
+
       <div className="host-header display-header">
         <div>
           <h1 className="title" style={{ textAlign: 'left' }}>
@@ -285,6 +367,11 @@ export function DisplayRoom() {
           </p>
         </div>
         <div className="row host-header-actions">
+          {setupCard && room.status === 'lobby' && (
+            <button className="btn btn-sm" type="button" onClick={() => setSetupOpen(true)}>
+              리모컨 안내 잠깐 보기
+            </button>
+          )}
           {(room.status === 'question' || room.status === 'reveal') && (
             <button className="btn btn-sm" type="button" onClick={() => setQrHidden((v) => !v)}>
               {qrHidden || room.showQr === false ? 'QR 보이기' : 'QR 숨기기'}

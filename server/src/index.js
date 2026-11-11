@@ -285,10 +285,12 @@ function markRoomAttendance(room, player) {
 
 // 게임이 끝나는 순간 한 번만 호출: 결과 요약(MVP·팀 승패)을 만들고,
 // 반이 연결돼 있으면 달란트를 원장에 기록한다.
+// 공개한 문제가 0개여도(첫 정답 공개 전 끝내기) 0점 결과 요약을 만든다.
 function finalizeGame(room) {
-  if (room.status !== 'finished' || room.finalResult || room.questions.length === 0) return;
-  const result = buildFinalResult(room);
-  room.finalResult = result;
+  if (room.status !== 'finished') return;
+  if (!room.finalResult) room.finalResult = buildFinalResult(room);
+  const result = room.finalResult;
+  if (result.recorded) return;
   // 닉네임 주인 확인을 통과한 친구만 반 장부에 기록한다.
   const players = [...room.players.values()].filter((p) => p.recordKey);
   if (!room.groupCode || players.length === 0) return;

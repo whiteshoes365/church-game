@@ -17,7 +17,7 @@ export default function HostCanvas3D({ players, status, correctAnswer, correctPl
     <Canvas
       shadows
       dpr={[1, 1.75]}
-      camera={{ position: [0, 10.5, 15], fov: 48, near: 0.1, far: 60 }}
+      camera={{ position: [0, 11.4, 16.4], fov: 46, near: 0.1, far: 70 }}
     >
       <color attach="background" args={['#bfe3f0']} />
       <fog attach="fog" args={['#bfe3f0', 18, 34]} />

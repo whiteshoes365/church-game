@@ -1,6 +1,6 @@
 // 진행자 화면(HostRoom)과 송출 화면(Display)이 함께 쓰는 "보여 주기" 조각들.
 // 여기에는 진행 버튼이 없다 — 문제·정답 띠, 3D 무대, 결과, 점수판만 그린다.
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { AvatarIcon } from './AvatarIcon';
 import { FitText } from './FitText';
 import { isWebGLAvailable } from '../three/webgl';
@@ -113,36 +113,43 @@ export function QuestionBanners({ room, now }: { room: RoomSnapshot; now: number
   );
 }
 
-/** 게임이 끝났을 때 무대 위에 뜨는 한 줄 결과 (이긴 팀 / MVP). */
+/** 게임이 끝났을 때 무대 위에 뜨는 한 줄 결과 (이긴 팀 / MVP). 0점이어도 띠는 보여 준다. */
 export function ResultHud({ room }: { room: RoomSnapshot }) {
-  const final = room.status === 'finished' ? room.finalResult ?? null : null;
+  if (room.status !== 'finished') return <div className="host-hud empty" />;
+  const final = room.finalResult ?? null;
   const mvpNames = final ? room.players.filter((p) => final.mvpIds.includes(p.id)).map((p) => p.nickname) : [];
   const winners = final?.team ? final.team.teams.filter((t) => final.team!.winnerTeamIds.includes(t.id)) : [];
+  const noScoredQuestions = !final || final.totalQuestions === 0;
   return (
-    <div className={`host-hud ${final ? '' : 'empty'}`}>
-      {final && (
-        <div className={`result-banner ${final.team ? 'team' : ''}`}>
-          {final.team ? (
-            <>
-              <span className="result-tag win">{final.team.tie ? '공동 우승' : '이긴 팀'}</span>
-              <span className="result-headline">
-                {winners.map((t) => (
-                  <span key={t.id} className="result-team-name" style={{ background: t.color }}>
-                    {t.name}
-                  </span>
-                ))}
-                {final.team.tie ? '무승부!' : '승리!'}
-              </span>
-              {final.team.bonus > 0 && room.groupCode && <span className="result-bonus">팀원 모두 +{final.team.bonus} 달란트</span>}
-            </>
-          ) : (
-            <>
-              <span className="result-tag win">퀴즈 종료</span>
-              <span className="result-headline">{mvpNames.length > 0 ? `오늘의 MVP ${mvpNames.join(' · ')}` : '모두 수고했어요!'}</span>
-            </>
-          )}
-        </div>
-      )}
+    <div className="host-hud">
+      <div className={`result-banner ${final?.team ? 'team' : ''}`}>
+        {final?.team ? (
+          <>
+            <span className="result-tag win">{final.team.tie ? '공동 우승' : '이긴 팀'}</span>
+            <span className="result-headline">
+              {winners.map((t) => (
+                <span key={t.id} className="result-team-name" style={{ background: t.color }}>
+                  {t.name}
+                </span>
+              ))}
+              {final.team.tie ? '무승부!' : '승리!'}
+            </span>
+            {final.team.bonus > 0 && room.groupCode && <span className="result-bonus">팀원 모두 +{final.team.bonus} 달란트</span>}
+          </>
+        ) : (
+          <>
+            <span className="result-tag win">퀴즈 종료</span>
+            <span className="result-headline">
+              {noScoredQuestions
+                ? '기록 없음 · 모두 수고했어요!'
+                : mvpNames.length > 0
+                  ? `오늘의 MVP ${mvpNames.join(' · ')}`
+                  : '모두 수고했어요!'}
+            </span>
+            {noScoredQuestions && <span className="result-bonus">정답을 공개한 문제가 없어 0점으로 끝났어요</span>}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -182,32 +189,44 @@ export function ResultTeams({ room }: { room: RoomSnapshot }) {
 /** 3D 무대 (WebGL 이 없으면 2D 지도). 게임이 끝나면 결과 단상. */
 export function RoomStage({ room, positions }: { room: RoomSnapshot; positions: Record<string, PlayerPosition> }) {
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
-  const final = room.status === 'finished' ? room.finalResult ?? null : null;
-  const resultColumns = final ? buildResultColumns(room) : [];
+  const finished = room.status === 'finished';
+  const final = finished ? room.finalResult ?? null : null;
+  const resultColumns = finished ? buildResultColumns(room) : [];
+  const [resultReady, setResultReady] = useState(false);
+
+  useEffect(() => {
+    if (!finished) setResultReady(false);
+  }, [finished, room.id]);
+
+  const showResultLayer = finished && webglAvailable;
+  const keepPlayLayer = !showResultLayer || !resultReady;
+
   return (
     <div className="map-area-3d">
-      {final && webglAvailable ? (
+      {showResultLayer && (
+        <div className={`canvas-fill result-layer ${resultReady ? 'ready' : 'loading'}`} aria-hidden={!resultReady}>
+          <Suspense fallback={null}>
+            <ResultCanvas3D columns={resultColumns} onReady={() => setResultReady(true)} />
+          </Suspense>
+        </div>
+      )}
+      {keepPlayLayer && webglAvailable && (
         <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
-          <div className="canvas-fill">
-            <ResultCanvas3D columns={resultColumns} />
-          </div>
-        </Suspense>
-      ) : webglAvailable ? (
-        <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
-          <div className="canvas-fill">
+          <div className={`canvas-fill play-layer ${showResultLayer ? 'under-result' : ''}`}>
             <HostCanvas3D
               players={room.players}
-              status={room.status}
-              correctAnswer={room.lastResult?.correctAnswer ?? null}
-              correctPlayerIds={room.lastResult?.correctPlayerIds}
+              status={finished ? 'lobby' : room.status}
+              correctAnswer={finished ? null : (room.lastResult?.correctAnswer ?? null)}
+              correctPlayerIds={finished ? undefined : room.lastResult?.correctPlayerIds}
               positions={positions}
               zones={room.zones}
             />
           </div>
         </Suspense>
-      ) : (
+      )}
+      {!webglAvailable && (
         <div className={`map-area ${MAP_CLASS[room.map]}`}>
-          {room.status !== 'lobby' && (
+          {room.status !== 'lobby' && room.status !== 'finished' && (
             <div className="map-zones">
               <div className="map-zone">
                 <div className="map-zone-sign o">O</div>
@@ -230,6 +249,12 @@ export function RoomStage({ room, positions }: { room: RoomSnapshot; positions: 
               );
             })}
           </div>
+        </div>
+      )}
+      {finished && final && resultColumns.length === 0 && (
+        <div className="result-empty-stage" role="status">
+          <b>기록 없음</b>
+          <small>정답을 공개한 문제가 없어 시상대를 비워 두었어요</small>
         </div>
       )}
       {room.status === 'question' && room.question?.paused && (

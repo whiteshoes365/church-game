@@ -114,9 +114,10 @@ function clampToBounds(pos) {
 }
 
 function randomSpawn() {
+  // 앞줄(z 큼)이 카메라에 너무 가까우면 발이 잘리므로, 지도 맨 앞보다는 한 걸음 뒤에서 시작한다.
   return {
     x: MAP_BOUNDS.xmin + 0.5 + Math.random() * (MAP_BOUNDS.xmax - MAP_BOUNDS.xmin - 1),
-    z: 7 + Math.random() * 1.5,
+    z: 5.8 + Math.random() * 1.4,
   };
 }
 
@@ -646,6 +647,7 @@ export function resumeQuestion(room, now = Date.now()) {
 
 // 퀴즈 일찍 끝내기(진행자 전용): 지금까지 공개한 문제까지만 치고 결과 화면으로 간다.
 // 아직 정답을 공개하지 않은 문제는 점수에 넣지 않는다.
+// 공개한 문제가 0개여도 finished + finalResult(0점)를 만들어 결과 띠·시상대가 비지 않게 한다.
 export function endQuiz(room) {
   if (room.status !== 'question' && room.status !== 'reveal') return false;
   clearTimer(room);
@@ -659,6 +661,7 @@ export function endQuiz(room) {
   room.answers = new Map();
   room.lastResult = null;
   for (const p of room.players.values()) p.side = null;
+  if (!room.finalResult) room.finalResult = buildFinalResult(room);
   return true;
 }
 

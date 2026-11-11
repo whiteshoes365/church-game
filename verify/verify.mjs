@@ -1756,8 +1756,21 @@ function verifyPauseUnit() {
   assert(room.status === 'question' && !room.paused && room.deadline !== null, '다음 문제는 멈춤 없이 시작');
   // 일찍 끝내기: 공개하지 않은 지금 문제는 치지 않는다 (공개한 1문제만 남음)
   assert(gameState.endQuiz(room) === true && room.status === 'finished' && room.questions.length === 1 && room.timer === null, '일찍 끝내면 공개한 문제까지만 침');
+  assert(room.finalResult && room.finalResult.totalQuestions === 1, '일찍 끝내도 결과 요약이 생김');
   assert(gameState.endQuiz(room) === false, '이미 끝난 게임은 다시 끝내지 않음');
   assert(timeouts === 0, '멈춤·끝내기 뒤에 남은 타이머가 없어야 함');
+
+  // 첫 정답 공개 전에 끝내도 0점 결과 요약이 있어야 결과 띠·시상대가 비지 않는다
+  const r0 = gameState.createRoom({ churchId: church.id, title: '공개전종료', pin: '1357', hostPassword: 'EarlyEnd1' });
+  gameState.joinRoom(r0, { deviceId: 'early-a', nickname: '알파', avatar: 'circle-blue' });
+  gameState.joinRoom(r0, { deviceId: 'early-b', nickname: '베타', avatar: 'circle-blue' });
+  gameState.startQuiz(r0, 3);
+  gameState.advanceQuestion(r0, () => {});
+  assert(r0.status === 'question', '첫 문제 진행 중');
+  assert(gameState.endQuiz(r0) === true && r0.status === 'finished' && r0.questions.length === 0, '공개 전 끝내면 공개한 문제 0개');
+  assert(r0.finalResult && r0.finalResult.totalQuestions === 0 && Array.isArray(r0.finalResult.mvpIds) && r0.finalResult.mvpIds.length === 0, '공개 전 끝내도 finalResult(0점)가 생김');
+  const earlySnap = gameState.serializeRoom(r0, { view: 'display' });
+  assert(earlySnap.status === 'finished' && earlySnap.finalResult && earlySnap.finalResult.totalQuestions === 0 && earlySnap.players.length === 2, '송출 스냅샷에도 0점 결과·참가자가 담김');
 
   // 스냅샷 보기 권한: 학생 < 송출 화면 < 진행자 < 리모컨
   const r2 = gameState.createRoom({ churchId: church.id, title: '권한', pin: '2460', hostPassword: 'ViewUnit22' });
@@ -1775,7 +1788,7 @@ function verifyPauseUnit() {
   // 음악 값 다듬기
   assert(JSON.stringify(gameState.normalizeMusic({ track: 'nope', volume: 7, enabled: 'yes' })) === JSON.stringify({ track: 'upbeat', enabled: true, volume: 1 }), '음악: 모르는 곡은 무시, 소리 크기는 0~1');
   assert(gameState.normalizeMusic({ track: 'march', enabled: false, volume: 0.55 }).track === 'march', '음악: 아는 곡은 반영');
-  log('pause/resume math, early end, snapshot views (player < display < host < remote), music normalize ok');
+  log('pause/resume math, early end with empty-result finalResult, snapshot views (player < display < host < remote), music normalize ok');
 }
 
 async function verifyDisplayRemote() {
@@ -1961,6 +1974,17 @@ async function verifyDisplayRemote() {
   const fin = await display.waitFor('roomState', (m) => m.room.status === 'finished');
   assert(fin.room.finalResult && fin.room.finalResult.totalQuestions === 2, `3문제 중 공개한 2문제까지만 결과에 침: ${JSON.stringify(fin.room.finalResult)}`);
   await s1.waitFor('roomState', (m) => m.room.status === 'finished');
+
+  // ---- 첫 공개 전에 끝내도 송출·리모컨에 결과 요약이 간다 ----
+  drain(remote, 'roomState');
+  remote.send('startQuiz', { roomId });
+  await remote.waitFor('roomState', (m) => m.room.status === 'question');
+  drain(display, 'roomState');
+  remote.send('endQuiz', { roomId });
+  const earlyFin = await display.waitFor('roomState', (m) => m.room.status === 'finished' && m.room.finalResult);
+  assert(earlyFin.room.finalResult.totalQuestions === 0 && earlyFin.room.players.length >= 1, '공개 전 끝내도 송출에 0점 finalResult가 감');
+  const earlyRemote = await remote.waitFor('roomState', (m) => m.room.status === 'finished' && m.room.finalResult);
+  assert(earlyRemote.room.finalResult.totalQuestions === 0, '리모컨에도 0점 finalResult가 감');
 
   // ---- 재접속: 송출 화면은 송출 키, 리모컨은 재접속 키 ----
   const everythingDisplaySaw = JSON.stringify(display.buffer) + JSON.stringify([displayState, dq0, pausedSnap, resumed, autoReveal, rev1, fin, paired]);
