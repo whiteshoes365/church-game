@@ -17,7 +17,9 @@
 - 새로 추가: `home-shop`, `home-shop-entry`, `home-shop-not-owner`, `host-password`(방 PIN을 넣어 거절된 화면), `host-password-create`(방 만들기에서 설정), `lobby`(다리 잘림 수정 + 진행자 비밀번호 표시)
 - 다시 찍음: `room-pin-host-lobby`, `room-pin-player-wrong`, `nickname-duplicate-error`, `shop`, `team-playing`, `team-result`, `player-result`, `attendance`, `weekly-cap`, `weekly-cap-person-ledger`, `games`, `host-home`
 
+**이후 수정**
+- 대기실 오른쪽 패널의 진행자 비밀번호는 처음부터 가린 상태(점 표시)로 두고, "보기"를 눌러야 보여요. (커밋은 이 파일과 함께 기록)
+
 **남은 문제**
-- 진행자 비밀번호가 대기실 오른쪽 패널에 기본으로 보입니다("가리기" 버튼 있음). 이 화면을 프로젝터로 띄우면 학생이 읽을 수 있으니, 기본을 가림으로 바꿀지 결정이 필요합니다.
 - 홈 상점은 닉네임을 등록한 기기에서만 열립니다. 폰을 바꾸면 교사가 "닉네임 기기 연결 풀기"를 한 뒤 방에 다시 들어와야 합니다.
 - 방 단위 잠금 때문에 학생이 일부러 틀려서 다른 기기의 비밀번호 입력을 30초씩 막을 수 있습니다(방을 만든 브라우저는 영향 없음).

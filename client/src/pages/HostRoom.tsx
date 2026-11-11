@@ -81,7 +81,7 @@ export function HostRoom() {
   const [linkPin, setLinkPin] = useState(() => loadGroupSession()?.pin ?? '');
   const [needHostPin, setNeedHostPin] = useState<string | null>(null);
   const [hostPin, setHostPin] = useState('');
-  const [showHostPw, setShowHostPw] = useState(true);
+  const [showHostPw, setShowHostPw] = useState(false);
   const [newHostPw, setNewHostPw] = useState('');
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
