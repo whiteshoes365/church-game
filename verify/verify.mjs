@@ -327,6 +327,17 @@ function verifyRulesUnit() {
   assert(!rawA.includes('dev-A') && !rawA.includes('dev-C'), '기기 id 원문은 파일에 저장하지 않음(해시만)');
   assert(!JSON.stringify(records.groupSummary('가반', { now: t0 })).includes(JSON.parse(rawA).members[first.key].owner), '요약에 기기 해시가 나가면 안 됨');
 
+  // --- 홈 화면 상점용 닉네임 주인 확인 (여기서는 새로 주인이 될 수 없음) ---
+  const errCode = (fn) => { try { fn(); } catch (e) { return e.code; } return null; };
+  assert(records.verifyNicknameOwner('가반', { nickname: ' 블록 왕 ', deviceId: 'dev-C' }).key === first.key, '주인 기기는 반 코드+닉네임으로 확인 통과');
+  assert(errCode(() => records.verifyNicknameOwner('가반', { nickname: '블록왕', deviceId: 'dev-A' })) === 'SHOP_NOT_OWNER', '다른 기기는 남의 닉네임으로 못 들어감');
+  assert(errCode(() => records.verifyNicknameOwner('가반', { nickname: '없는친구', deviceId: 'dev-C' })) === 'SHOP_NOT_FOUND', '없는 닉네임');
+  assert(errCode(() => records.verifyNicknameOwner('없는반', { nickname: '블록왕', deviceId: 'dev-C' })) === 'SHOP_NOT_FOUND', '없는 반도 같은 안내');
+  assert(errCode(() => records.verifyNicknameOwner('../x', { nickname: '블록왕', deviceId: 'dev-C' })) === 'SHOP_NOT_FOUND', '이상한 반 코드도 같은 안내');
+  records.markAttendance('가반', { nickname: '선생님이추가', via: 'teacher', now: t0 });
+  assert(errCode(() => records.verifyNicknameOwner('가반', { nickname: '선생님이추가', deviceId: 'dev-Z' })) === 'SHOP_NOT_CLAIMED', '주인이 없는 닉네임은 홈에서 차지할 수 없음');
+  assert(JSON.parse(fs.readFileSync(path.join(dir, '가반.json'), 'utf8')).members[records.nickKey('선생님이추가')].owner === undefined, '확인만으로는 주인이 등록되지 않음');
+
   // --- 2) 출석은 입장 순간 (게임과 무관), 같은 주 두 번 들어와도 1회 ---
   const att1 = records.markAttendance('가반', { nickname: '블록왕', now: t0 });
   const att2 = records.markAttendance('가반', { nickname: '블록왕', now: t0 + 3 * 86400000 }); // 같은 주 금요일
@@ -962,6 +973,53 @@ async function main() {
     teacher.send('hostOpenRoom', { roomId: tRoomId, hostKey: tRoomCreated.hostKey });
     assert((await teacher.waitFor('roomState', (m) => m.room.id === tRoomId)).room.pin === TEST_ROOM_PIN, '호스트 키로 다시 열면 PIN 포함 상태를 받음');
 
+    // --- 진행자 비밀번호 (방 PIN 과 별개) ---
+    const autoHostPw = tRoomCreated.room.hostPassword;
+    assert(/^\d{6}$/.test(autoHostPw) && autoHostPw !== TEST_ROOM_PIN, `안 정하면 숫자 6자리 자동 생성: ${autoHostPw}`);
+    await expectError(stranger, 'createRoom', { churchId: tChurch.church.id, title: 'x', hostPassword: 'ab' }, /영문·숫자 4~12자/, '너무 짧은 진행자 비밀번호');
+    await expectError(stranger, 'createRoom', { churchId: tChurch.church.id, title: 'x', hostPassword: '한글비밀번호' }, /영문·숫자 4~12자/, '허용 안 되는 문자');
+    await expectError(stranger, 'createRoom', { churchId: tChurch.church.id, title: 'x', pin: '5555', hostPassword: '5555' }, /다르게/, '방 PIN 과 같은 진행자 비밀번호');
+    stranger.send('createRoom', { churchId: tChurch.church.id, title: '비번지정방', pin: '5555', hostPassword: 'Teach2026' });
+    const pwRoom = await stranger.waitFor('roomCreated', (m) => m.room.title === '비번지정방');
+    assert(pwRoom.room.hostPassword === 'Teach2026' && pwRoom.room.pin === '5555', '방 만들 때 정한 진행자 비밀번호');
+    // 맞는 진행자 비밀번호면 다른 브라우저(호스트 키 없음)에서도 열림
+    const hostPw = new Client('host-pw');
+    await hostPw.ready();
+    hostPw.send('hostOpenRoom', { roomId: pwRoom.room.id, hostPassword: 'Teach2026' });
+    const pwOpened = await hostPw.waitFor('roomState', (m) => m.room.id === pwRoom.room.id);
+    assert(pwOpened.room.pin === '5555' && pwOpened.room.hostPassword === 'Teach2026', '진행자 비밀번호로 진행자 화면 열림');
+    // 진행자가 비밀번호 변경 (호스트만, 방 PIN 과 같게는 불가)
+    await expectError(pinTester, 'setHostPassword', { roomId: pwRoom.room.id, hostPassword: 'Hack1234' }, /호스트만/, '호스트 아닌 비밀번호 변경');
+    await expectError(hostPw, 'setHostPassword', { roomId: pwRoom.room.id, hostPassword: '5555' }, /다르게/, 'PIN 과 같은 값으로 변경');
+    hostPw.send('setHostPassword', { roomId: pwRoom.room.id, hostPassword: 'New12345' });
+    await hostPw.waitFor('roomState', (m) => m.room.id === pwRoom.room.id && m.room.hostPassword === 'New12345');
+    // 방 PIN 만 아는 학생은 진행자 화면을 열 수 없음 (PIN 을 비밀번호 칸에 넣어도, 예전 pin 필드로 보내도)
+    const hostFail = async (client, payload) => {
+      client.buffer = client.buffer.filter((m) => m.type !== 'error' && m.type !== 'roomState');
+      client.send('hostOpenRoom', payload);
+      return (await client.waitFor('error')).message;
+    };
+    const wrongHostMsg = await hostFail(pinTester, { roomId: tRoomId, hostPassword: TEST_ROOM_PIN });
+    assert(/진행자 비밀번호가 맞지 않아요/.test(wrongHostMsg) && /방 입장 PIN이 아니라/.test(wrongHostMsg), `방 PIN 으로는 거절: ${wrongHostMsg}`);
+    pinTester.send('hostOpenRoom', { roomId: tRoomId, pin: TEST_ROOM_PIN });
+    await pinTester.waitFor('hostAuthRequired', (m) => m.roomId === tRoomId);
+    await expectError(pinTester, 'reveal', { roomId: tRoomId }, /호스트만/, '방 PIN 만으로는 여전히 호스트 아님');
+    assert(!pinTester.buffer.some((m) => m.type === 'roomState'), '거절된 소켓에는 방 상태(PIN·비밀번호)가 가지 않음');
+    // 없는 방도 같은 문구 (방이 있는지 알려 주지 않음)
+    assert((await hostFail(stranger, { roomId: 'no-such-room', hostPassword: 'whatever1' })) === wrongHostMsg, '없는 방과 틀린 비밀번호는 같은 안내');
+    // 5번 틀리면 30초 잠금: 2~4번째는 일반 안내, 5번째부터 잠금 안내
+    for (let n = 2; n <= 4; n++) assert((await hostFail(pinTester, { roomId: tRoomId, hostPassword: `wrong${n}00` })) === wrongHostMsg, `${n}번째 오답은 일반 안내`);
+    const lockMsg = await hostFail(pinTester, { roomId: tRoomId, hostPassword: 'wrong500' });
+    assert(/여러 번 틀렸어요/.test(lockMsg) && /30초/.test(lockMsg), `5번째 오답에서 잠금: ${lockMsg}`);
+    assert((await hostFail(pinTester, { roomId: tRoomId, hostPassword: autoHostPw })) === lockMsg, '잠긴 동안에는 맞는 비밀번호도 거절');
+    assert((await hostFail(hostPw, { roomId: tRoomId, hostPassword: autoHostPw })) === lockMsg, '방 단위 잠금: 다른 접속에서 이어서 시도해도 거절');
+    // 방을 만든 브라우저(호스트 키)는 잠금과 상관없이 열림
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState');
+    teacher.send('hostOpenRoom', { roomId: tRoomId, hostKey: tRoomCreated.hostKey });
+    const reopened = await teacher.waitFor('roomState', (m) => m.room.id === tRoomId);
+    assert(reopened.room.hostPassword === autoHostPw && reopened.room.pin === TEST_ROOM_PIN, '호스트 키로는 잠금 중에도 열리고 PIN·비밀번호를 둘 다 받음');
+    hostPw.close();
+
     // 틀린 PIN 으로는 다른 방을 이 반에 연결할 수 없음
     stranger.send('createRoom', { pin: TEST_ROOM_PIN, churchId: tChurch.church.id, title: '몰래방', groupCode, groupPin: '1111' });
     const sneaky = await stranger.waitFor('roomCreated');
@@ -974,11 +1032,11 @@ async function main() {
       p.client.send('joinRoom', { pin: TEST_ROOM_PIN, roomId: tRoomId, deviceId: p.deviceId, nickname: p.nickname, avatar: p.avatar });
       const j = await p.client.waitFor('joined');
       assert(j.attendance && j.attendance.newlyMarked && j.attendance.week === currentWeek && j.attendance.streak === 1, `${p.nickname} 입장 시 출석이 기록되어야 함`);
-      assert(j.room.pin === undefined, '학생에게 가는 방 상태에는 PIN 이 없어야 함');
+      assert(j.room.pin === undefined && j.room.hostPassword === undefined, '학생에게 가는 방 상태에는 PIN·진행자 비밀번호가 없어야 함');
     }
     // 맞는 PIN 이면 입장 성공 (위 4명), 이후 학생용 roomState 에도 PIN 없음
     const pState = await tp[3].client.waitFor('roomState', (m) => m.room.players.length === 4);
-    assert(pState.room.pin === undefined, '학생용 roomState 에 PIN 없음');
+    assert(pState.room.pin === undefined && pState.room.hostPassword === undefined, '학생용 roomState 에 PIN·진행자 비밀번호 없음');
     let g = await latestGroup(teacher, (x) => x.members.length === 4);
     // 출석은 "방 입장 순간" 집계: 아직 게임을 한 판도 안 했는데 4명 모두 출석
     assert(g.games.length === 0 && g.ledger.length === 0, '게임 시작 전(기록된 게임 0판)에 이미 출석 처리');
@@ -1175,6 +1233,69 @@ async function main() {
     const back = await tp[0].client.waitFor('joined');
     assert(back.room.players.find((pl) => pl.id === tp[0].deviceId).cosmetics.hat === 'hat-melon', '재입장(PIN 없이, 이미 방에 있던 기기) 후에도 착용 유지');
 
+    // --- 홈 화면 상점: 방 밖에서 반 코드 + 닉네임으로 (닉네임 주인 기기만) ---
+    const home = new Client('home-shop');
+    await home.ready();
+    await expectError(home, 'shopOpen', {}, /먼저 확인/, '확인 없이 홈 상점 열기');
+    const loginFail = async (payload) => {
+      home.buffer = home.buffer.filter((m) => m.type !== 'error');
+      home.send('shopLogin', payload);
+      return (await home.waitFor('error')).message;
+    };
+    const notFoundMsg = await loginFail({ code: groupCode, nickname: '없는닉네임', deviceId: tp[0].deviceId });
+    assert(/다시 확인/.test(notFoundMsg) && /닉네임을 등록/.test(notFoundMsg), `없는 닉네임 안내: ${notFoundMsg}`);
+    assert((await loginFail({ code: '없는반코드', nickname: '블록1', deviceId: tp[0].deviceId })) === notFoundMsg, '없는 반도 같은 안내');
+    assert(/다른 친구의 닉네임/.test(await loginFail({ code: groupCode, nickname: '블록2', deviceId: tp[0].deviceId })), '남의 닉네임으로는 상점을 열 수 없음');
+    assert(/주인이 정해지지 않았어요/.test(await loginFail({ code: groupCode, nickname: '폰없는친구', deviceId: 'device-new' })), '주인 없는 닉네임은 홈에서 열 수 없음(방에서 먼저 등록)');
+    await expectError(home, 'shopBuy', { itemId: 'hat-sprout' }, /먼저 확인/, '확인 실패 후 구입 시도');
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'groupData'); // 예전 스냅샷 제거
+    teacher.send('groupOpen', { code: groupCode, pin: PIN });
+    g = await latestGroup(teacher, (x) => x.code === opened.group.code);
+    assert(g.members.find((m) => m.nickname === '폰없는친구').claimed === false && totalOf(g, '블록2') === 8, '실패한 시도는 아무 기록도 바꾸지 않음');
+    // 주인 기기: 공백이 달라도 같은 닉네임으로 확인
+    home.send('shopLogin', { code: ` ${groupCode} `, nickname: ' 블록 1 ', deviceId: tp[0].deviceId });
+    const ready = await home.waitFor('shopReady');
+    assert(ready.nickname === '블록1' && ready.code === opened.group.code, '홈 상점 확인 통과');
+    const homeMsg = async (type, payload) => {
+      home.buffer = home.buffer.filter((m) => m.type !== 'shopData');
+      home.send(type, payload);
+      return home.waitFor('shopData');
+    };
+    let hs = await homeMsg('shopOpen', {});
+    assert(hs.shop.balance === 2 && hs.shop.owned.join() === 'hat-melon' && hs.shop.equipped.hat === 'hat-melon' && hs.shop.items.length === 11 && hs.shop.avatar === tp[0].avatar, `홈 상점은 방 안 상점과 같은 지갑: ${JSON.stringify({ ...hs.shop, items: undefined })}`);
+    await expectError(home, 'shopBuy', { itemId: 'outfit-checker' }, /3개 모자라요/, '홈 상점 잔액 부족');
+    teacher.send('groupAdjust', { code: groupCode, nickname: '블록1', delta: 6, reason: '홈 상점 검증' });
+    await latestGroup(teacher, (x) => x.code === opened.group.code && totalOf(x, '블록1') === 8);
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState');
+    hs = await homeMsg('shopBuy', { itemId: 'outfit-checker' });
+    assert(hs.charged === 5 && hs.shop.balance === 3 && hs.shop.equipped.outfit === 'outfit-checker' && hs.shop.equipped.hat === 'hat-melon', '홈에서 구입: 5 차감, 자동 착용');
+    // 홈에서 산 옷이 지금 들어가 있는 방의 캐릭터에도 바로 보임
+    await teacher.waitFor('roomState', (m) => m.room.id === tRoomId && m.room.players.find((pl) => pl.id === tp[0].deviceId)?.cosmetics?.outfit === 'outfit-checker');
+    hs = await homeMsg('shopBuy', { itemId: 'outfit-checker' });
+    assert(hs.charged === 0 && hs.shop.balance === 3, '홈에서도 보유 아이템 재구입은 차감 없음');
+    await expectError(home, 'shopBuy', { itemId: 'hat-sprout' }, /1개 모자라요/, '홈 상점: 잔액이 음수가 되는 구입 불가');
+    hs = await homeMsg('shopEquip', { itemId: 'hat-melon', equip: false });
+    assert(hs.shop.equipped.hat === undefined && hs.shop.equipped.outfit === 'outfit-checker' && hs.shop.balance === 3, '홈에서 착용 해제');
+    hs = await homeMsg('shopEquip', { itemId: 'hat-melon', equip: true });
+    assert(hs.shop.equipped.hat === 'hat-melon', '홈에서 다시 착용');
+    // 방 안 상점에서 보는 잔액과 같음 (지갑은 하나)
+    shop = await shopMsg('shopOpen', {});
+    assert(shop.shop.balance === 3 && shop.shop.owned.length === 2, '방 안 상점과 홈 상점의 잔액·보유 목록이 같음');
+    g = await latestGroup(teacher, (x) => x.code === opened.group.code && totalOf(x, '블록1') === 3);
+    assert(g.ledger.filter((e) => e.kind === 'shop').length === 2 && g.ledger.some((e) => e.kind === 'shop' && e.delta === -5 && e.reason.includes('체크무늬')), '홈 구입도 같은 장부에 지출로 기록');
+    // 확인 실패 5번이면 30초 잠금
+    const homeLock = new Client('home-lock');
+    await homeLock.ready();
+    let lastLoginMsg = '';
+    for (let n = 1; n <= 6; n++) {
+      homeLock.buffer = homeLock.buffer.filter((m) => m.type !== 'error');
+      homeLock.send('shopLogin', { code: groupCode, nickname: '블록2', deviceId: 'device-bad' });
+      lastLoginMsg = (await homeLock.waitFor('error')).message;
+    }
+    assert(/30초/.test(lastLoginMsg), `홈 상점 확인도 5번 틀리면 잠금: ${lastLoginMsg}`);
+    home.close();
+    homeLock.close();
+
     // 서버가 실제로 파일에 저장했는지 (임시 폴더, 원자적 쓰기라 .tmp 가 남지 않음)
     const recFiles = fs.readdirSync(SERVER_RECORDS_DIR);
     assert(recFiles.length === 2 && recFiles.every((f) => f.endsWith('.json')), `반 기록 파일(반 2개): ${recFiles}`);
@@ -1182,6 +1303,7 @@ async function main() {
     assert(saved.games.length === 2 && saved.pinHash && !JSON.stringify(saved).includes(`"${PIN}"`), '파일에 게임 2판 저장, PIN 평문 없음');
     log('attendance, talent auto-award + manual adjust, team split + winner/loser + bonus ok');
     log('room PIN, unique nickname, attendance-on-enter, weekly cap, manual override, shop purchase/equip/ledger ok');
+    log('home-screen shop (class code + owned nickname) and separate host password with 5-try lockout ok');
 
     pinTester.close();
     dup.close();

@@ -28,6 +28,7 @@ import {
   autoSplitTeams,
   assignTeam,
   buildFinalResult,
+  setHostPassword,
 } from './state.js';
 import {
   openGroup,
@@ -44,6 +45,7 @@ import {
   shopState,
   buyItem,
   equipItem,
+  verifyNicknameOwner,
 } from './records.js';
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -90,6 +92,55 @@ function failJoin(socket) {
     f.lockedUntil = Date.now() + JOIN_LOCK_MS;
   }
   throw new Error(JOIN_FAIL_MESSAGE);
+}
+
+// ---- 진행자(호스트) 비밀번호 ----
+// 방을 만든 브라우저(hostKey)는 항상 통과. 그 밖에는 진행자 비밀번호가 맞아야 한다.
+// 방 입장 PIN 으로는 열 수 없다. 5번 틀리면 30초 잠금(접속 단위 + 방 단위).
+// 없는 방이어도 같은 문구로 답해서 방이 있는지 알려 주지 않는다.
+const HOST_MAX_FAILS = 5;
+const HOST_LOCK_MS = 30000;
+const HOST_LOCK_MESSAGE = '진행자 비밀번호를 여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.';
+const HOST_FAIL_MESSAGE = '진행자 비밀번호가 맞지 않아요. 방 입장 PIN이 아니라 선생님용 진행자 비밀번호를 입력해 주세요.';
+
+function bumpFail(f) {
+  f.count += 1;
+  if (f.count >= HOST_MAX_FAILS) {
+    f.count = 0;
+    f.lockedUntil = Date.now() + HOST_LOCK_MS;
+  }
+}
+
+// 반환: 'ok' | 'need' (아무것도 안 보냄 → 입력 화면) — 틀리면 오류를 던진다.
+function checkHostAccess(socket, room, msg) {
+  if (room && typeof msg.hostKey === 'string' && msg.hostKey === room.hostKey) return 'ok';
+  const supplied = typeof msg.hostPassword === 'string' && msg.hostPassword.length > 0;
+  if (!supplied) return 'need';
+  const now = Date.now();
+  if (socket.hostFails.lockedUntil > now || (room && room.hostFails.lockedUntil > now)) throw new Error(HOST_LOCK_MESSAGE);
+  if (room && msg.hostPassword === room.hostPassword) {
+    socket.hostFails.count = 0;
+    room.hostFails.count = 0;
+    return 'ok';
+  }
+  bumpFail(socket.hostFails);
+  if (room) bumpFail(room.hostFails);
+  throw new Error(socket.hostFails.lockedUntil > now || (room && room.hostFails.lockedUntil > now) ? HOST_LOCK_MESSAGE : HOST_FAIL_MESSAGE);
+}
+
+// 홈 화면 상점에서 산/착용한 아이템을, 그 친구가 지금 들어가 있는 방 캐릭터에도 바로 반영한다.
+function syncCosmeticsToRooms(code, key, equipped) {
+  for (const room of allRooms()) {
+    if (room.groupCode !== code) continue;
+    let changed = false;
+    for (const p of room.players.values()) {
+      if (p.recordKey === key) {
+        p.cosmetics = { ...equipped };
+        changed = true;
+      }
+    }
+    if (changed) broadcastRoom(room);
+  }
 }
 
 function pinMatches(room, pin) {
@@ -236,6 +287,9 @@ wss.on('connection', (socket) => {
   socket.meta = { roomId: null, deviceId: null, role: null };
   socket.groupAuth = new Set(); // 이 소켓이 교사 PIN 으로 연 반 코드들
   socket.joinFails = { count: 0, lockedUntil: 0 }; // 방 PIN 틀린 횟수
+  socket.hostFails = { count: 0, lockedUntil: 0 }; // 진행자 비밀번호 틀린 횟수
+  socket.shopFails = { count: 0, lockedUntil: 0 }; // 홈 상점 닉네임 확인 실패 횟수
+  socket.shopAuth = null; // 홈 화면 상점: { code, key } (닉네임 주인 확인을 통과한 경우만)
 
   socket.on('message', (raw) => {
     let msg;
@@ -300,6 +354,7 @@ function handleMessage(socket, msg) {
         level: msg.level,
         questionCount: msg.questionCount,
         pin: msg.pin,
+        hostPassword: msg.hostPassword,
       });
       room.hostSocket = socket;
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
@@ -318,15 +373,11 @@ function handleMessage(socket, msg) {
 
     case 'hostOpenRoom': {
       const room = getRoom(msg.roomId);
-      // 호스트 화면은 방을 만든 브라우저(hostKey) 또는 방 PIN 을 아는 사람만 열 수 있다.
-      if (socket.joinFails.lockedUntil > Date.now()) throw new Error('여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.');
-      if (!room || !(msg.hostKey === room.hostKey || pinMatches(room, msg.pin))) {
-        socket.joinFails.count += 1;
-        if (socket.joinFails.count >= JOIN_MAX_FAILS) socket.joinFails = { count: 0, lockedUntil: Date.now() + JOIN_LOCK_MS };
-        send(socket, 'hostAuthRequired', { roomId: msg.roomId, message: '호스트 화면을 열려면 방 PIN 숫자 4자리를 입력해 주세요.' });
+      // 진행자 화면: 방을 만든 브라우저(hostKey) 또는 진행자 비밀번호. 방 입장 PIN 으로는 열 수 없다.
+      if (checkHostAccess(socket, room, msg) !== 'ok') {
+        send(socket, 'hostAuthRequired', { roomId: msg.roomId, message: '진행자 화면을 열려면 선생님용 진행자 비밀번호를 입력해 주세요.' });
         break;
       }
-      socket.joinFails.count = 0;
       room.hostSocket = socket;
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
       send(socket, 'roomState', { room: serializeRoom(room, { forHost: true }) });
@@ -489,29 +540,50 @@ function handleMessage(socket, msg) {
     }
 
     // ---- 달란트 상점 (학생: 자기 닉네임의 주인으로 방에 들어와 있어야 함) ----
+    // 홈 화면 상점 입장: 반 코드 + 닉네임 + 이 기기가 그 닉네임의 주인인지 확인.
+    case 'shopLogin': {
+      if (socket.shopFails.lockedUntil > Date.now()) throw new Error('여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.');
+      socket.shopAuth = null;
+      try {
+        const who = verifyNicknameOwner(msg.code, { nickname: msg.nickname, deviceId: msg.deviceId });
+        socket.shopAuth = { code: who.code, key: who.key };
+        socket.shopFails.count = 0;
+        send(socket, 'shopReady', { code: who.code, nickname: who.nickname });
+      } catch (err) {
+        bumpFail(socket.shopFails);
+        throw err;
+      }
+      break;
+    }
+
     case 'shopOpen': {
-      const { room, player } = requireShopPlayer(socket, msg.roomId);
-      send(socket, 'shopData', { shop: shopState(room.groupCode, player.recordKey) });
+      const { code, key } = requireShopAccess(socket, msg.roomId);
+      send(socket, 'shopData', { shop: shopState(code, key) });
       break;
     }
 
     case 'shopBuy': {
-      const { room, player } = requireShopPlayer(socket, msg.roomId);
-      const { charged, state } = buyItem(room.groupCode, player.recordKey, msg.itemId);
-      player.cosmetics = state.equipped;
+      const { code, key } = requireShopAccess(socket, msg.roomId);
+      const { charged, state } = buyItem(code, key, msg.itemId);
       send(socket, 'shopData', { shop: state, charged, itemId: msg.itemId });
-      broadcastRoom(room);
-      pushGroup(room.groupCode);
+      syncCosmeticsToRooms(code, key, state.equipped);
+      pushGroup(code);
       break;
     }
 
     case 'shopEquip': {
-      const { room, player } = requireShopPlayer(socket, msg.roomId);
-      const state = equipItem(room.groupCode, player.recordKey, msg.itemId, msg.equip !== false);
-      player.cosmetics = state.equipped;
+      const { code, key } = requireShopAccess(socket, msg.roomId);
+      const state = equipItem(code, key, msg.itemId, msg.equip !== false);
       send(socket, 'shopData', { shop: state });
+      syncCosmeticsToRooms(code, key, state.equipped);
+      pushGroup(code);
+      break;
+    }
+
+    case 'setHostPassword': {
+      const room = requireHostRoom(socket, msg.roomId);
+      setHostPassword(room, msg.hostPassword);
       broadcastRoom(room);
-      pushGroup(room.groupCode);
       break;
     }
 
@@ -526,6 +598,16 @@ function handleMessage(socket, msg) {
     default:
       send(socket, 'error', { message: `알 수 없는 메시지 타입: ${msg.type}` });
   }
+}
+
+// 상점 접근: 방 안(roomId 있음)이면 그 방의 내 캐릭터, 홈 화면(roomId 없음)이면 shopLogin 으로 확인된 닉네임.
+function requireShopAccess(socket, roomId) {
+  if (roomId) {
+    const { room, player } = requireShopPlayer(socket, roomId);
+    return { code: room.groupCode, key: player.recordKey };
+  }
+  if (!socket.shopAuth) throw new Error('상점을 열려면 반 코드와 내 닉네임을 먼저 확인해 주세요.');
+  return socket.shopAuth;
 }
 
 function requireShopPlayer(socket, roomId) {

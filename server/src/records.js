@@ -553,6 +553,37 @@ export function claimNickname(code, { nickname, deviceId, avatar = null, now = D
   return { key, nickname: member.nickname, equipped: { ...(member.equipped || {}) } };
 }
 
+// 홈 화면 상점용: 반 코드 + 닉네임 + 기기가 "이미 등록된 닉네임 주인"인지 확인만 한다.
+// 여기서는 새로 주인이 될 수 없다(주인 등록은 방 PIN 을 알고 방에 들어올 때만).
+// 반이 없거나 닉네임이 없을 때는 같은 안내를 준다(어떤 반·이름이 있는지 알려 주지 않는다).
+export function verifyNicknameOwner(code, { nickname, deviceId }) {
+  const notFound = () => {
+    const err = new Error('반 코드나 닉네임을 다시 확인해 주세요. 아직 게임 방에 들어온 적이 없다면, 먼저 선생님 방에 들어가서 닉네임을 등록해 주세요.');
+    err.code = 'SHOP_NOT_FOUND';
+    return err;
+  };
+  let group;
+  try {
+    group = loadGroup(normalizeCode(code));
+  } catch {
+    throw notFound();
+  }
+  const key = nickKey(nickname);
+  const member = group && key ? group.members[key] : null;
+  if (!member) throw notFound();
+  if (!member.owner) {
+    const err = new Error(`"${member.nickname}" 닉네임은 아직 주인이 정해지지 않았어요. 선생님 방에 먼저 들어가서 내 닉네임으로 등록한 뒤에 상점을 열 수 있어요.`);
+    err.code = 'SHOP_NOT_CLAIMED';
+    throw err;
+  }
+  if (!deviceId || member.owner !== ownerHash(group.code, String(deviceId))) {
+    const err = new Error(`"${member.nickname}"은(는) 다른 친구의 닉네임이에요. 다른 친구 이름으로는 상점을 열 수 없어요. 내 닉네임을 등록한 기기에서 열어 주세요.`);
+    err.code = 'SHOP_NOT_OWNER';
+    throw err;
+  }
+  return { code: group.code, key, nickname: member.nickname };
+}
+
 // 교사용: 폰을 바꾼 친구가 다시 같은 닉네임으로 들어올 수 있게 주인 표시를 지운다.
 export function releaseNickname(code, nickname) {
   const group = requireGroup(code);
@@ -580,6 +611,7 @@ export function shopState(code, key, { now = Date.now() } = {}) {
   const earned = weekAutoEarned(group, key, isoWeekKST(now));
   return {
     nickname: member.nickname,
+    avatar: member.avatar || null,
     balance: balanceOf(group, key),
     owned: [...member.owned],
     equipped: { ...member.equipped },

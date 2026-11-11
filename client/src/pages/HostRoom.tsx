@@ -81,6 +81,8 @@ export function HostRoom() {
   const [linkPin, setLinkPin] = useState(() => loadGroupSession()?.pin ?? '');
   const [needHostPin, setNeedHostPin] = useState<string | null>(null);
   const [hostPin, setHostPin] = useState('');
+  const [showHostPw, setShowHostPw] = useState(true);
+  const [newHostPw, setNewHostPw] = useState('');
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
   useEffect(() => {
@@ -124,19 +126,25 @@ export function HostRoom() {
         <div className="screen-narrow stack">
           {needHostPin ? (
             <div className="card stack">
-              <h2 className="card-title">호스트 확인</h2>
+              <h2 className="card-title">
+                <span className="title-block block-blue" aria-hidden />
+                진행자 확인
+              </h2>
               <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>{needHostPin}</p>
               <input
-                className="input pin-input"
-                inputMode="numeric"
-                placeholder="0000"
-                maxLength={4}
+                className="input host-pw-input"
+                type="password"
+                autoComplete="off"
+                placeholder="진행자 비밀번호"
+                maxLength={12}
                 value={hostPin}
-                onChange={(e) => setHostPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                onChange={(e) => setHostPin(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
+                onKeyDown={(e) => e.key === 'Enter' && hostPin.length >= 4 && gameSocket.send('hostOpenRoom', { roomId, hostPassword: hostPin })}
               />
-              <button className="btn btn-primary" disabled={hostPin.length !== 4} onClick={() => gameSocket.send('hostOpenRoom', { roomId, pin: hostPin })}>
-                호스트 화면 열기
+              <button className="btn btn-primary" disabled={hostPin.length < 4} onClick={() => gameSocket.send('hostOpenRoom', { roomId, hostPassword: hostPin })}>
+                진행자 화면 열기
               </button>
+              <p className="fine-print">학생 입장용 방 PIN으로는 열 수 없어요. 5번 틀리면 30초 동안 잠겨요.</p>
             </div>
           ) : (
             <p className="subtitle">{error ?? '방 정보를 불러오는 중이에요...'}</p>
@@ -409,6 +417,38 @@ export function HostRoom() {
                   </button>
                   <p className="fine-print">이름을 누르면 다음 팀으로 옮겨요.</p>
                 </>
+              )}
+              {room.hostPassword && (
+                <div className="setup-link host-pw-box">
+                  <div className="setup-row">
+                    <b>진행자 비밀번호</b>
+                    <button className="chip" onClick={() => setShowHostPw((v) => !v)}>
+                      {showHostPw ? '가리기' : '보기'}
+                    </button>
+                  </div>
+                  <div className="host-pw-value">{showHostPw ? room.hostPassword : '•'.repeat(room.hostPassword.length)}</div>
+                  <p className="fine-print">선생님만 알고 계세요. 학생에게는 방 PIN({room.pin})만 알려 주세요.</p>
+                  <div className="row" style={{ gap: 6 }}>
+                    <input
+                      className="input input-sm"
+                      placeholder="새 비밀번호 (4~12자)"
+                      maxLength={12}
+                      autoComplete="off"
+                      value={newHostPw}
+                      onChange={(e) => setNewHostPw(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
+                    />
+                    <button
+                      className="btn btn-sm"
+                      disabled={newHostPw.length < 4}
+                      onClick={() => {
+                        gameSocket.send('setHostPassword', { roomId, hostPassword: newHostPw });
+                        setNewHostPw('');
+                      }}
+                    >
+                      변경
+                    </button>
+                  </div>
+                </div>
               )}
               {!room.groupCode && (
                 <div className="setup-link">

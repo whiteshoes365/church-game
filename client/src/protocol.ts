@@ -33,6 +33,7 @@ export interface ShopItem {
 
 export interface ShopState {
   nickname: string;
+  avatar?: string | null;
   balance: number;
   owned: string[];
   equipped: Cosmetics;
@@ -204,6 +205,7 @@ export interface PlayerPosition {
 export interface RoomSnapshot {
   id: string;
   pin?: string; // 호스트에게만 내려오는 방 입장 PIN
+  hostPassword?: string; // 호스트에게만 내려오는 진행자 비밀번호 (방 PIN 과 별개)
   churchId: string;
   title: string;
   map: MapTheme;

@@ -268,13 +268,35 @@ export function normalizeRoomPin(pin) {
   return p;
 }
 
-export function createRoom({ churchId, title, map, capacity, questionSeconds, level, questionCount, pin }) {
+// 진행자(호스트) 비밀번호: 방 입장 PIN 과 별개. 학생에게 불러 주는 PIN 만으로는
+// 진행자 화면을 열 수 없다. 정하지 않으면 숫자 6자리를 자동으로 만든다.
+export function normalizeHostPassword(password) {
+  if (password === undefined || password === null || password === '') return String(randomInt(0, 1000000)).padStart(6, '0');
+  const p = String(password).trim();
+  if (!/^[0-9A-Za-z]{4,12}$/.test(p)) throw new Error('진행자 비밀번호는 영문·숫자 4~12자로 정해 주세요.');
+  return p;
+}
+
+export function setHostPassword(room, password) {
+  const p = normalizeHostPassword(password);
+  if (p === room.pin) throw new Error('진행자 비밀번호는 방 입장 PIN과 다르게 정해 주세요.');
+  room.hostPassword = p;
+}
+
+export function createRoom({ churchId, title, map, capacity, questionSeconds, level, questionCount, pin, hostPassword }) {
   const church = getChurch(churchId);
   if (!church) throw new Error('교회를 찾을 수 없어요.');
-  const roomPin = normalizeRoomPin(pin);
+  const roomHostPassword = normalizeHostPassword(hostPassword);
+  let roomPin = normalizeRoomPin(pin);
+  if (roomPin === roomHostPassword) {
+    if (pin) throw new Error('진행자 비밀번호는 방 입장 PIN과 다르게 정해 주세요.');
+    while (roomPin === roomHostPassword) roomPin = normalizeRoomPin(); // 자동 PIN 이 우연히 같으면 다시 뽑는다
+  }
   const room = {
     id: randomUUID(),
     pin: roomPin,
+    hostPassword: roomHostPassword,
+    hostFails: { count: 0, lockedUntil: 0 }, // 진행자 비밀번호 틀린 횟수 (방 단위)
     hostKey: randomUUID(), // 방을 만든 브라우저만 아는 값 (호스트 화면 다시 열 때 확인)
     churchId,
     title: (title || '방').trim(),
@@ -424,7 +446,7 @@ export function serializeRoom(room, { forHost = false } = {}) {
   const q = currentQuestion(room);
   return {
     id: room.id,
-    ...(forHost ? { pin: room.pin } : {}),
+    ...(forHost ? { pin: room.pin, hostPassword: room.hostPassword } : {}),
     churchId: room.churchId,
     title: room.title,
     map: room.map,

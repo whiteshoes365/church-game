@@ -36,6 +36,8 @@ export function HostRooms() {
   const [useGroup, setUseGroup] = useState<boolean>(!!session);
   const [teamMode, setTeamMode] = useState(false);
   const [pin, setPin] = useState('');
+  // 진행자 비밀번호: 반 기록을 열어 둔 선생님은 교사 PIN 을 기본값으로 (바꿀 수 있음)
+  const [hostPassword, setHostPassword] = useState(() => session?.pin ?? '');
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,9 +66,18 @@ export function HostRooms() {
       setFormError('방 PIN은 숫자 4자리로 정해 주세요. 비워 두면 자동으로 만들어요.');
       return;
     }
+    if (hostPassword && !/^[0-9A-Za-z]{4,12}$/.test(hostPassword)) {
+      setFormError('진행자 비밀번호는 영문·숫자 4~12자로 정해 주세요. 비워 두면 자동으로 만들어요.');
+      return;
+    }
+    if (hostPassword && hostPassword === pin) {
+      setFormError('진행자 비밀번호는 방 입장 PIN과 다르게 정해 주세요.');
+      return;
+    }
     setFormError(null);
     gameSocket.send('createRoom', {
       pin: pin || undefined,
+      hostPassword: hostPassword || undefined,
       churchId,
       title: title.trim(),
       map,
@@ -142,6 +153,16 @@ export function HostRooms() {
             value={pin}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
           />
+          <p className="picker-label">진행자 비밀번호 (선생님만, 영문·숫자 4~12자)</p>
+          <input
+            className="input"
+            placeholder="비워 두면 자동으로 만들어요"
+            maxLength={12}
+            autoComplete="off"
+            value={hostPassword}
+            onChange={(e) => setHostPassword(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
+          />
+          <p className="fine-print">방 PIN은 학생 입장용, 진행자 비밀번호는 진행자 화면을 다시 열 때 써요. 학생에게 알려 주지 마세요.</p>
           {formError && <p className="form-error">{formError}</p>}
           <p className="picker-label">더 재미있게</p>
           <div className="row">

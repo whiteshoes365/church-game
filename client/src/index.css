@@ -2245,3 +2245,30 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---- 홈 화면 상점 입구 · 진행자 비밀번호 ---- */
+.home-shop-btn {
+  font-size: 18px;
+}
+
+.shop-login-error {
+  margin: 0;
+}
+
+.host-pw-input {
+  text-align: center;
+  font-size: 22px;
+  letter-spacing: 0.2em;
+}
+
+.host-pw-value {
+  padding: 6px 8px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #fff;
+  background: #2b3a67;
+  border: 3px solid var(--border);
+  word-break: break-all;
+}

@@ -61,6 +61,10 @@ export function PlayerJoin() {
           {results.some((c) => c.name === query.trim()) ? '선택한 교회로 계속하기' : '이 이름으로 교회 만들기 / 찾기'}
         </button>
 
+        <button className="btn shop-open-btn home-shop-btn" onClick={() => navigate('/shop')}>
+          <span className="talent-coin" aria-hidden /> 달란트 상점
+        </button>
+
         <button className="link-btn" onClick={() => navigate('/host')}>
           선생님이신가요? 호스트 화면으로 이동
         </button>

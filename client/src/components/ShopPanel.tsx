@@ -10,18 +10,19 @@ const SLOT_LABEL: Record<ShopItem['slot'], string> = { hat: '모자', outfit: '�
 const SLOTS: ShopItem['slot'][] = ['hat', 'outfit', 'extra'];
 
 interface Props {
-  roomId: string;
+  roomId?: string; // 없으면 홈 화면 상점 (반 코드 + 닉네임으로 확인된 상태)
   avatarId: string;
   onClose: () => void;
 }
 
 // 달란트 상점: 게임에서 모은 달란트로 내 블록 캐릭터를 꾸며요.
 // (게임 안 꾸미기 전용 — 실제 선물 교환이 아니에요)
-export function ShopPanel({ roomId, avatarId, onClose }: Props) {
+export function ShopPanel({ roomId, avatarId: fallbackAvatar, onClose }: Props) {
   const [shop, setShop] = useState<ShopState | null>(null);
   const [tryOn, setTryOn] = useState<ShopItem | null>(null);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const webgl = useMemo(() => isWebGLAvailable(), []);
+  const avatarId = shop?.avatar || fallbackAvatar;
 
   useEffect(() => {
     const offData = gameSocket.on('shopData', (msg) => {
