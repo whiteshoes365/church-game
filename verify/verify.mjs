@@ -16,7 +16,7 @@ const ALL_QUESTIONS = Object.values(QUESTIONS_BY_LEVEL).flat();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const PORT = 8799;
-const TEST_ROOM_PIN = '4321'; // 기존 검사들이 쓰는 방 입장 PIN
+const TEST_ROOM_PIN = '4321'; // 기존 검사들이 쓰는 방 PIN (학생 입장용)
 const REMOTE = process.env.VERIFY_WS_URL;
 const WS_URL = REMOTE || `ws://localhost:${PORT}`;
 const DEFAULT_WAIT_TIMEOUT_MS = REMOTE ? 10000 : 4000;
@@ -946,6 +946,12 @@ async function main() {
     await expectError(stranger, 'groupOpen', { code: groupCode, pin: '0000' }, /PIN이 맞지/, '틀린 PIN');
     await expectError(stranger, 'groupAdjust', { code: groupCode, nickname: '블록1', delta: 99, reason: '몰래' }, /PIN 확인/, '미인증 달란트 조정');
     await expectError(stranger, 'groupMarkAttendance', { code: groupCode, nickname: '유령' }, /PIN 확인/, '미인증 출석 추가');
+    // 이미 교사 PIN 으로 연 접속은 장부를 다시 열 때 PIN 을 또 내지 않아도 됨. 인증 안 된 접속은 여전히 거절.
+    teacher.buffer = teacher.buffer.filter((m) => m.type !== 'groupData');
+    teacher.send('groupOpen', { code: groupCode });
+    assert((await teacher.waitFor('groupData')).group.code === opened.group.code, '인증된 접속은 PIN 없이 장부를 다시 열 수 있음');
+    await expectError(stranger, 'groupOpen', { code: groupCode }, /PIN/, '인증 안 된 접속이 PIN 없이 장부 열기');
+    await expectError(stranger, 'groupAdjust', { code: groupCode, nickname: '블록1', delta: 1, reason: '재시도' }, /PIN 확인/, 'PIN 없는 시도 뒤에도 미인증');
 
     // 반 연결 + 팀 대결 방 만들기 (교사 소켓이 호스트)
     teacher.send('findOrCreateChurch', { name: `검증교회-팀-${Date.now()}` });
@@ -1009,7 +1015,7 @@ async function main() {
       return (await client.waitFor('error')).message;
     };
     const wrongHostMsg = await hostFail(pinTester, { roomId: tRoomId, hostPassword: TEST_ROOM_PIN });
-    assert(/진행자 비밀번호가 맞지 않아요/.test(wrongHostMsg) && /방 입장 PIN이 아니라/.test(wrongHostMsg), `방 PIN 으로는 거절: ${wrongHostMsg}`);
+    assert(/진행자 비밀번호가 맞지 않아요/.test(wrongHostMsg) && /방 PIN이 아니라/.test(wrongHostMsg) && !/입장 PIN/.test(wrongHostMsg), `방 PIN 으로는 거절: ${wrongHostMsg}`);
     pinTester.send('hostOpenRoom', { roomId: tRoomId, pin: TEST_ROOM_PIN });
     await pinTester.waitFor('hostAuthRequired', (m) => m.roomId === tRoomId);
     await expectError(pinTester, 'reveal', { roomId: tRoomId }, /호스트만/, '방 PIN 만으로는 여전히 호스트 아님');
@@ -1021,7 +1027,14 @@ async function main() {
     const lockMsg = await hostFail(pinTester, { roomId: tRoomId, hostPassword: 'wrong500' });
     assert(/여러 번 틀렸어요/.test(lockMsg) && /30초/.test(lockMsg), `5번째 오답에서 잠금: ${lockMsg}`);
     assert((await hostFail(pinTester, { roomId: tRoomId, hostPassword: autoHostPw })) === lockMsg, '잠긴 동안에는 맞는 비밀번호도 거절');
-    assert((await hostFail(hostPw, { roomId: tRoomId, hostPassword: autoHostPw })) === lockMsg, '방 단위 잠금: 다른 접속에서 이어서 시도해도 거절');
+    // 잠금은 틀린 그 접속(소켓)에만 걸린다: 같은 방이라도 다른 접속은 계속 시도할 수 있다.
+    assert((await hostFail(hostPw, { roomId: tRoomId, hostPassword: 'wrong600' })) === wrongHostMsg, '다른 접속은 잠기지 않고 일반 안내를 받음(방 단위 잠금 아님)');
+    hostPw.buffer = hostPw.buffer.filter((m) => m.type !== 'roomState' && m.type !== 'error');
+    hostPw.send('hostOpenRoom', { roomId: tRoomId, hostPassword: autoHostPw });
+    const otherSocketOpened = await hostPw.waitFor('roomState', (m) => m.room.id === tRoomId);
+    assert(otherSocketOpened.room.hostPassword === autoHostPw, '한 접속이 잠겨 있어도 다른 접속은 맞는 비밀번호로 진행자 화면을 열 수 있음');
+    assert(!hostPw.buffer.some((m) => m.type === 'error'), '다른 접속에는 잠금 오류가 가지 않음');
+    assert((await hostFail(pinTester, { roomId: tRoomId, hostPassword: autoHostPw })) === lockMsg, '잠긴 접속은 30초 동안 계속 잠겨 있음');
     // 방을 만든 브라우저(호스트 키)는 잠금과 상관없이 열림
     teacher.buffer = teacher.buffer.filter((m) => m.type !== 'roomState');
     teacher.send('hostOpenRoom', { roomId: tRoomId, hostKey: tRoomCreated.hostKey });
@@ -1314,6 +1327,8 @@ async function main() {
     log('room PIN, unique nickname, attendance-on-enter, weekly cap, manual override, shop purchase/equip/ledger ok');
     log('home-screen shop (class code + owned nickname) and separate host password with 5-try lockout ok');
 
+    await verifyGuideFindings();
+
     pinTester.close();
     dup.close();
     teacher.close();
@@ -1344,6 +1359,143 @@ async function main() {
     console.error('[verify] FAILED:', err);
     process.exit(1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// 10. 실전 가이드 점검 반영: 문제 수 상한, 4:4 팀 합계·평균, 구역 안 흩어 서기
+// ---------------------------------------------------------------------------
+async function verifyGuideFindings() {
+  log('--- guide findings: question-count cap, 4v4 team totals, zone spread ---');
+  const gh = new Client('guide-host');
+  await gh.ready();
+  gh.send('findOrCreateChurch', { name: `검증교회-가이드-${Date.now()}` });
+  const churchId = (await gh.waitFor('churchJoined')).church.id;
+
+  // --- 문제 수는 그 난이도 문제 은행 크기를 넘지 않는다 ---
+  gh.send('listRooms', { churchId });
+  const bank = (await gh.waitFor('roomList')).questionBank;
+  for (const level of LEVELS) {
+    const size = QUESTIONS_BY_LEVEL[level].length;
+    assert(bank && bank[level] === size, `방 목록 응답에 ${level} 문제 은행 크기(${size})가 있어야 함: ${JSON.stringify(bank)}`);
+    gh.send('createRoom', { churchId, title: `상한-${level}`, level, questionCount: 30 });
+    const capped = await gh.waitFor('roomCreated', (m) => m.room.title === `상한-${level}`);
+    assert(capped.room.questionCount === Math.min(30, size), `${level}: 30문제를 골라도 은행 크기(${size})까지만: ${capped.room.questionCount}`);
+    gh.buffer = gh.buffer.filter((m) => m.type !== 'roomState');
+    gh.send('startQuiz', { roomId: capped.room.id, questionCount: 999 });
+    const started = await gh.waitFor('roomState', (m) => m.room.id === capped.room.id && m.room.status === 'question');
+    assert(started.room.question.total === size, `${level}: 시작할 때도 은행 크기(${size})를 넘지 않음: ${started.room.question.total}`);
+  }
+  gh.send('createRoom', { churchId, title: '상한-작게', level: 'elementary', questionCount: 5 });
+  assert((await gh.waitFor('roomCreated', (m) => m.room.title === '상한-작게')).room.questionCount === 5, '은행보다 작은 문제 수는 그대로');
+
+  // --- 4:4 팀 대결: 빨강 5+3+5+5 = 18, 파랑 5+5+5+5 = 20 ---
+  const RED = ['믿음', '기쁨', '평화', '충성'];
+  const BLUE = ['은혜', '소망', '사랑', '온유'];
+  const TARGET = { 기쁨: 3 }; // 나머지는 5점
+  const ROUNDS = 5;
+  gh.send('createRoom', { pin: TEST_ROOM_PIN, churchId, title: '4대4', capacity: 8, teamMode: true, questionCount: ROUNDS });
+  const roomId = (await gh.waitFor('roomCreated', (m) => m.room.title === '4대4')).room.id;
+  const kids = [...BLUE, ...RED].map((nickname, i) => ({ nickname, deviceId: `device-guide-${i}`, client: new Client(`guide-${i}`) }));
+  await Promise.all(kids.map((k) => k.client.ready()));
+  for (const k of kids) {
+    k.client.send('joinRoom', { pin: TEST_ROOM_PIN, roomId, deviceId: k.deviceId, nickname: k.nickname, avatar: 's1b0h0' });
+    await k.client.waitFor('joined');
+  }
+  const wanted = Object.fromEntries(kids.map((k) => [k.deviceId, RED.includes(k.nickname) ? 'red' : 'blue']));
+  const teamOf = (room) => Object.fromEntries(room.players.map((pl) => [pl.id, pl.teamId]));
+  for (const [playerId, teamId] of Object.entries(wanted)) gh.send('assignTeam', { roomId, playerId, teamId });
+  const split = await gh.waitFor('roomState', (m) => m.room.id === roomId && m.room.players.length === 8 && JSON.stringify(teamOf(m.room)) === JSON.stringify(wanted));
+  assert(split.room.team.teams.map((t) => t.size).join() === '4,4', '4:4 로 나뉘어야 함');
+
+  // 합계 = 그 팀 팀원 점수의 합, 평균 = 합계 ÷ 인원, memberIds = 그 팀원들 — 한 스냅샷 안에서 항상 맞아야 한다.
+  const assertStandings = (teams, players, label) => {
+    for (const t of teams) {
+      const members = players.filter((pl) => pl.teamId === t.id);
+      const sum = members.reduce((acc, pl) => acc + pl.score, 0);
+      assert(t.size === members.length, `${label} ${t.name}: 인원 ${t.size} ≠ ${members.length}`);
+      assert(t.total === sum, `${label} ${t.name}: 합계 ${t.total} ≠ 팀원 점수 합 ${sum} (${members.map((pl) => pl.score).join('+')})`);
+      assert(t.average === Math.round((sum / members.length) * 100) / 100, `${label} ${t.name}: 평균 ${t.average} ≠ ${sum}/${members.length}`);
+      assert(t.memberIds.slice().sort().join() === members.map((pl) => pl.id).sort().join(), `${label} ${t.name}: memberIds 가 팀원과 달라요`);
+    }
+  };
+
+  gh.buffer = gh.buffer.filter((m) => m.type !== 'roomState');
+  gh.send('startQuiz', { roomId });
+  for (let round = 0; round < ROUNDS; round++) {
+    const q = await gh.waitFor('roomState', (m) => m.room.id === roomId && m.room.status === 'question' && m.room.question?.index === round);
+    assert(q.room.question.total === ROUNDS, `문제 수 ${ROUNDS}`);
+    const correct = answerFor(q.room.question.text);
+    const choices = kids.map((k) => (round < (TARGET[k.nickname] ?? 5) ? correct : opposite(correct)));
+    kids.forEach((k, i) => k.client.send('answer', { roomId, choice: choices[i] }));
+    const targets = kids.map((k, i) => ({ deviceId: k.deviceId, zoneBox: ZONES[choices[i]] }));
+    assert(await waitUntilAllInZones(gh, roomId, targets, ZONE_ARRIVAL_TIMEOUT_MS), `4대4 ${round + 1}번 문제: 모두 고른 구역에 도착해야 함`);
+
+    // 같은 구역으로 걸어간 친구들은 가운데 한 점에 겹쳐 서지 않고 구역 안에 흩어져 선다.
+    let settled = null;
+    const settleBy = Date.now() + ZONE_ARRIVAL_TIMEOUT_MS;
+    while (Date.now() < settleBy) {
+      gh.buffer = gh.buffer.filter((m) => !(m.type === 'positions' && m.roomId === roomId));
+      const msg = await gh.waitFor('positions', (m) => m.roomId === roomId);
+      if (msg.players.length === 8 && msg.players.every((pl) => pl.state === 'idle')) {
+        settled = msg.players;
+        break;
+      }
+    }
+    assert(settled, `4대4 ${round + 1}번 문제: 모두 자리에 멈춰 서야 함`);
+    let minDist = Infinity;
+    for (let i = 0; i < settled.length; i++) {
+      const zi = kids.findIndex((k) => k.deviceId === settled[i].id);
+      assert(inZone(settled[i], ZONES[choices[zi]]), `${kids[zi].nickname}: 흩어 선 자리도 고른 구역 안이어야 함 ${JSON.stringify(settled[i])}`);
+      for (let j = i + 1; j < settled.length; j++) {
+        minDist = Math.min(minDist, Math.hypot(settled[i].x - settled[j].x, settled[i].z - settled[j].z));
+      }
+    }
+    assert(minDist >= 0.9, `4대4 ${round + 1}번 문제: 아바타가 겹쳐 서면 안 됨 (가장 가까운 두 명 ${minDist.toFixed(2)})`);
+    if (round === 0) {
+      // 첫 문제는 8명 모두 같은 구역: 예전에는 전부 구역 한가운데로 갔다.
+      const box = ZONES[correct];
+      const cx = (box.xmin + box.xmax) / 2;
+      const cz = (box.zmin + box.zmax) / 2;
+      const nearCenter = settled.filter((pl) => Math.hypot(pl.x - cx, pl.z - cz) < 0.6).length;
+      assert(nearCenter <= 1, `8명이 같은 구역일 때 가운데에 몰리면 안 됨 (가운데 ${nearCenter}명)`);
+    }
+
+    gh.send('reveal', { roomId });
+    const rev = await gh.waitFor('roomState', (m) => m.room.id === roomId && m.room.status === 'reveal' && m.room.question?.index === round);
+    assertStandings(rev.room.team.teams, rev.room.players, `게임 중(${round + 1}번 문제)`);
+    gh.send('nextQuestion', { roomId });
+  }
+
+  const fin = await gh.waitFor('roomState', (m) => m.room.id === roomId && m.room.status === 'finished' && m.room.finalResult);
+  const scoreOf = (nick) => fin.room.players.find((pl) => pl.nickname === nick).score;
+  assert(RED.map(scoreOf).join('+') === '5+3+5+5' && BLUE.map(scoreOf).join('+') === '5+5+5+5', `개인 점수: 빨강 ${RED.map(scoreOf)} / 파랑 ${BLUE.map(scoreOf)}`);
+  const ft = fin.room.finalResult.team;
+  assertStandings(ft.teams, fin.room.players, '최종 결과');
+  assertStandings(fin.room.team.teams, fin.room.players, '종료 후 팀 현황');
+  const red = ft.teams.find((t) => t.id === 'red');
+  const blue = ft.teams.find((t) => t.id === 'blue');
+  assert(red.total === 18 && red.average === 4.5 && red.size === 4, `빨강 벽돌팀은 합계 18 · 평균 4.5 여야 함(13 아님): ${JSON.stringify(red)}`);
+  assert(blue.total === 20 && blue.average === 5 && blue.size === 4, `파랑 얼음팀은 합계 20 · 평균 5 여야 함: ${JSON.stringify(blue)}`);
+  assert(ft.winnerTeamIds.join() === 'blue' && ft.loserTeamIds.join() === 'red' && ft.tie === false, `평균이 높은 파랑이 이김: ${JSON.stringify(ft)}`);
+  // 학생 화면도 같은 숫자를 받는다
+  const pFin = await kids[5].client.waitFor('roomState', (m) => m.room.status === 'finished' && m.room.finalResult);
+  const pRed = pFin.room.finalResult.team.teams.find((t) => t.id === 'red');
+  assert(pRed.total === 18 && pRed.average === 4.5, `학생 화면의 빨강팀 합계·평균: ${JSON.stringify(pRed)}`);
+
+  // 끝난 뒤 다음 판을 위해 팀을 옮겨도, 이미 끝난 판의 결과(합계 18 / 20)는 바뀌지 않는다.
+  const moved = kids.find((k) => k.nickname === '믿음');
+  gh.buffer = gh.buffer.filter((m) => m.type !== 'roomState');
+  gh.send('assignTeam', { roomId, playerId: moved.deviceId, teamId: 'blue' });
+  const after = await gh.waitFor('roomState', (m) => m.room.id === roomId && m.room.players.find((pl) => pl.id === moved.deviceId)?.teamId === 'blue');
+  const frozen = after.room.finalResult.team.teams;
+  assert(frozen.find((t) => t.id === 'red').total === 18 && frozen.find((t) => t.id === 'blue').total === 20, `끝난 판의 결과는 그대로: ${JSON.stringify(frozen)}`);
+  assert(frozen.find((t) => t.id === 'red').memberIds.includes(moved.deviceId), '끝난 판의 팀원 목록도 그대로');
+  assertStandings(after.room.team.teams, after.room.players, '팀을 옮긴 뒤 팀 현황');
+  assert(after.room.team.teams.find((t) => t.id === 'red').total === 13 && after.room.team.teams.find((t) => t.id === 'red').size === 3, '옮긴 뒤 빨강 현황은 3명 · 합계 13 (5+3+5)');
+
+  for (const k of kids) k.client.close();
+  gh.close();
+  log('question-count cap per level, 4v4 totals (18 vs 20) + averages, frozen result, zone spread ok');
 }
 
 function waitUntil(predicate, timeoutMs) {

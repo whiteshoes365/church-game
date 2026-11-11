@@ -225,7 +225,7 @@ export function PlayerRoom() {
           <h1 className="title">닉네임과 아바타를 골라주세요</h1>
           <p className="subtitle">실명이나 전화번호는 필요 없어요</p>
           <div className="pin-entry card">
-            <p className="picker-label">방 PIN (숫자 4자리)</p>
+            <p className="picker-label">방 PIN (학생용, 숫자 4자리)</p>
             <input
               className="input pin-input"
               inputMode="numeric"
@@ -330,7 +330,7 @@ export function PlayerRoom() {
               {myTeam && (
                 <span className="team-chip" style={{ background: myTeam.color }}>
                   우리 팀: {myTeam.name}
-                  {room.status !== 'lobby' && ` · 평균 ${myTeam.average}`}
+                  {(room.status === 'question' || room.status === 'reveal') && ` · 합계 ${myTeam.total}점 · 평균 ${myTeam.average}점`}
                 </span>
               )}
               {attendance && (
@@ -395,6 +395,7 @@ export function PlayerRoom() {
                 ? '선택 완료! 조이스틱으로 자리를 옮길 수도 있어요.'
                 : '지도의 O/X 를 누르면 걸어가요. 조이스틱으로 직접 움직여도 돼요.'}
             </p>
+            <p className="play-hint play-rule">정답 공개 때 서 있는 O/X 자리로 채점해요. (처음 누른 버튼이 아니에요)</p>
 
             <MovementControls roomId={roomId}>
               <div className="ox-buttons">
@@ -452,6 +453,9 @@ export function PlayerRoom() {
                   <p className="player-team-result" style={{ borderColor: mine.color }}>
                     <span className="team-dot" style={{ background: mine.color }} />
                     {mine.name} {won ? (fr.tie ? '무승부!' : '승리!') : '아쉽지만 잘했어요!'}
+                    <small className="player-team-score">
+                      합계 {mine.total}점 · 평균 {mine.average}점 · {mine.size}명
+                    </small>
                   </p>
                 );
               })()}

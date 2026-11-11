@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { AvatarIcon } from '../components/AvatarIcon';
 import { DEFAULT_AVATAR_ID } from '../avatars';
-import { loadGroupSession, normalizeGroupCode, saveGroupSession } from '../groupSession';
+import { loadGroupSession, normalizeGroupCode, requestGroupSession, saveGroupSession } from '../groupSession';
 import { LEVEL_LABELS } from '../levels';
 import type { GroupData, GroupMember, LedgerEntry } from '../protocol';
 
@@ -81,10 +81,27 @@ export function HostGroup() {
       setError(msg.message);
       if (/PIN/.test(msg.message)) setNeedPin(true);
     });
+    // 교사 PIN 을 다시 묻지 않는 순서:
+    //  1) 이 탭이 이미 연 반 → 저장된 세션으로 바로 열기
+    //  2) 같은 브라우저의 다른 탭(진행자 화면)이 연 반 → 그 탭에서 세션을 받아 열기
+    //  3) 그래도 없으면(새 브라우저·다른 기기) 교사 PIN 입력
+    let cancelled = false;
     const session = loadGroupSession();
-    if (session && session.code === code) gameSocket.send('groupOpen', { code, pin: session.pin });
-    else setNeedPin(true);
+    if (session && session.code === code) {
+      gameSocket.send('groupOpen', { code, pin: session.pin });
+    } else {
+      requestGroupSession(code).then((shared) => {
+        if (cancelled) return;
+        if (shared) {
+          saveGroupSession(shared);
+          gameSocket.send('groupOpen', { code, pin: shared.pin });
+        } else {
+          setNeedPin(true);
+        }
+      });
+    }
     return () => {
+      cancelled = true;
       offData();
       offError();
     };
@@ -112,7 +129,7 @@ export function HostGroup() {
           <h1 className="title">{code} 반 기록</h1>
           {needPin ? (
             <div className="card stack">
-              <p className="picker-label">교사 PIN을 입력해 주세요</p>
+              <p className="picker-label">교사 PIN (반 기록용, 숫자 4~8자리)</p>
               <input
                 className="input"
                 type="password"
@@ -125,6 +142,7 @@ export function HostGroup() {
               <button className="btn btn-primary" onClick={submitPin}>
                 열기
               </button>
+              <p className="fine-print">반을 만들 때 정한 교사 PIN이에요. 방 PIN·진행자 비밀번호와는 다른 번호예요.</p>
             </div>
           ) : (
             <p className="subtitle">기록을 불러오는 중이에요...</p>

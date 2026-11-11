@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { AvatarIcon } from '../components/AvatarIcon';
-import { BannerAdSlot } from '../components/BannerAdSlot';
 import { isWebGLAvailable } from '../three/webgl';
 import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
 import type { ResultColumn } from '../three/ResultCanvas3D';
@@ -29,7 +28,8 @@ function buildResultColumns(room: RoomSnapshot): ResultColumn[] {
         color: t.color,
         height: Math.max(1, 3 - place),
         winner: final.team!.winnerTeamIds.includes(t.id),
-        members: room.players.filter((p) => p.teamId === t.id).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, cosmetics: p.cosmetics })),
+        // 결과 카드의 합계·평균을 낸 바로 그 팀원들 (끝난 뒤 팀을 다시 섞어도 결과는 그대로)
+        members: room.players.filter((p) => (t.memberIds ? t.memberIds.includes(p.id) : p.teamId === t.id)).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, cosmetics: p.cosmetics })),
       };
     });
     return cols;
@@ -131,6 +131,7 @@ export function HostRoom() {
                 진행자 확인
               </h2>
               <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>{needHostPin}</p>
+              <p className="picker-label">진행자 비밀번호 (선생님만, 영문·숫자 4~12자)</p>
               <input
                 className="input host-pw-input"
                 type="password"
@@ -144,7 +145,7 @@ export function HostRoom() {
               <button className="btn btn-primary" disabled={hostPin.length < 4} onClick={() => gameSocket.send('hostOpenRoom', { roomId, hostPassword: hostPin })}>
                 진행자 화면 열기
               </button>
-              <p className="fine-print">학생 입장용 방 PIN으로는 열 수 없어요. 5번 틀리면 30초 동안 잠겨요.</p>
+              <p className="fine-print">방 PIN(학생용, 숫자 4자리)으로는 열 수 없어요. 5번 틀리면 이 기기에서 30초 동안 잠겨요.</p>
             </div>
           ) : (
             <p className="subtitle">{error ?? '방 정보를 불러오는 중이에요...'}</p>
@@ -168,6 +169,9 @@ export function HostRoom() {
   const winners = final?.team ? final.team.teams.filter((t) => final.team!.winnerTeamIds.includes(t.id)) : [];
   const awardById = new Map((final?.awards ?? []).map((a) => [a.id, a]));
   const maxAvg = Math.max(1, ...(team?.teams ?? []).map((t) => t.average));
+  // 팀 점수(합계·평균)는 게임 중에만 옆 칸에 보여 준다. 끝난 뒤에는 결과 카드가
+  // 그 판의 점수를 보여 주고, 옆 칸은 다음 판을 위한 팀 편성(인원)만 보여 준다.
+  const showTeamScore = room.status === 'question' || room.status === 'reveal';
 
   function linkGroup() {
     const code = normalizeGroupCode(linkCode);
@@ -198,7 +202,7 @@ export function HostRoom() {
             <span className={`badge badge-level ${LEVEL_CLASS[room.level]}`}>{LEVEL_LABELS[room.level]}</span>
             {team && <span className="badge badge-team">팀 대결</span>}
             {room.groupCode && <span className="badge badge-group">{room.groupCode} 반 기록 중</span>}
-            {room.pin && room.status !== 'lobby' && <span className="badge badge-pin">입장 PIN {room.pin}</span>}
+            {room.pin && room.status !== 'lobby' && <span className="badge badge-pin">방 PIN {room.pin}</span>}
           </p>
         </div>
         <div className="row">
@@ -297,8 +301,8 @@ export function HostRoom() {
           {room.status === 'lobby' && room.pin && (
             <div className="pin-board">
               <span className="pin-board-label">
-                방 입장 PIN
-                <small>친구들에게 이 숫자를 알려 주세요</small>
+                방 PIN
+                <small>학생 입장용 · 친구들에게 이 숫자 4자리를 알려 주세요</small>
               </span>
               <span className="pin-digits">
                 {room.pin.split('').map((d, i) => (
@@ -322,7 +326,13 @@ export function HostRoom() {
                       {t.name}
                     </span>
                     <span className="result-team-score">
-                      평균 {t.average}점 <small>합계 {t.total}점 · {t.size}명</small>
+                      <span className="result-team-stat">
+                        합계 <b>{t.total}</b>점
+                      </span>
+                      <span className="result-team-stat">
+                        평균 <b>{t.average}</b>점
+                      </span>
+                      <span className="result-team-stat dim">{t.size}명</span>
                     </span>
                     {!won && <span className="result-cheer">아쉽지만 잘했어요!</span>}
                   </div>
@@ -427,7 +437,7 @@ export function HostRoom() {
                     </button>
                   </div>
                   <div className="host-pw-value">{showHostPw ? room.hostPassword : '•'.repeat(room.hostPassword.length)}</div>
-                  <p className="fine-print">선생님만 알고 계세요. 학생에게는 방 PIN({room.pin})만 알려 주세요.</p>
+                  <p className="fine-print">선생님만 알고 계세요(영문·숫자 4~12자). 학생에게는 방 PIN({room.pin})만 알려 주세요.</p>
                   <div className="row" style={{ gap: 6 }}>
                     <input
                       className="input input-sm"
@@ -460,6 +470,7 @@ export function HostRoom() {
                       type="password"
                       inputMode="numeric"
                       placeholder="교사 PIN"
+                      aria-label="교사 PIN (반 기록용, 숫자 4~8자리)"
                       value={linkPin}
                       onChange={(e) => setLinkPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
                     />
@@ -467,6 +478,7 @@ export function HostRoom() {
                       연결
                     </button>
                   </div>
+                  <p className="fine-print">교사 PIN은 반 기록용 숫자 4~8자리예요.</p>
                 </div>
               )}
             </div>
@@ -478,9 +490,9 @@ export function HostRoom() {
                 <div key={t.id} className="team-box" style={{ borderColor: t.color }}>
                   <div className="team-box-head" style={{ background: t.color }}>
                     <span>{t.name}</span>
-                    <span>{room.status === 'lobby' ? `${t.size}명` : `평균 ${t.average}`}</span>
+                    <span className="team-box-score">{showTeamScore ? `합계 ${t.total} · 평균 ${t.average}` : `${t.size}명`}</span>
                   </div>
-                  {room.status !== 'lobby' && (
+                  {showTeamScore && (
                     <div className="team-bar">
                       <div className="team-bar-fill" style={{ width: `${(t.average / maxAvg) * 100}%`, background: t.color }} />
                     </div>
@@ -528,7 +540,6 @@ export function HostRoom() {
             })}
           </div>
           {final?.recorded && <p className="fine-print side-note">달란트가 {room.groupCode} 반 장부에 기록됐어요.</p>}
-          <BannerAdSlot />
         </div>
       </div>
     </div>

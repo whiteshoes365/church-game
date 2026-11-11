@@ -19,6 +19,19 @@ const CAPACITY_OPTIONS: { value: Capacity; label: string }[] = [
 ];
 
 const QUESTION_COUNT_OPTIONS = [10, 20, 30] as const;
+const MAX_QUESTION_COUNT = QUESTION_COUNT_OPTIONS[QUESTION_COUNT_OPTIONS.length - 1];
+
+type QuestionBank = Partial<Record<Level, number>>;
+
+// 고를 수 있는 문제 수: 그 난이도 문제 은행보다 큰 선택지는 빼고,
+// 은행이 가장 큰 선택지(30)보다 작으면 "전체 N문제"를 마지막 선택지로 넣는다.
+// 은행 크기를 아직 모르면(서버 응답 전) 기본 선택지를 그대로 보여 준다.
+function questionCountChoices(bankSize: number | undefined): { value: number; all: boolean }[] {
+  if (!bankSize) return QUESTION_COUNT_OPTIONS.map((value) => ({ value, all: false }));
+  const choices: { value: number; all: boolean }[] = QUESTION_COUNT_OPTIONS.filter((n) => n < bankSize).map((value) => ({ value, all: false }));
+  choices.push({ value: Math.min(bankSize, MAX_QUESTION_COUNT), all: bankSize <= MAX_QUESTION_COUNT });
+  return choices;
+}
 
 export function HostRooms() {
   const { churchId } = useParams<{ churchId: string }>();
@@ -31,7 +44,15 @@ export function HostRooms() {
   const [map, setMap] = useState<MapTheme>('sanctuary');
   const [capacity, setCapacity] = useState<Capacity>(8);
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
-  const [questionCount, setQuestionCount] = useState<number>(30);
+  const [questionCount, setQuestionCount] = useState<number>(MAX_QUESTION_COUNT);
+  const [questionBank, setQuestionBank] = useState<QuestionBank>({});
+  const bankSize = questionBank[level];
+  const countChoices = questionCountChoices(bankSize);
+  // 난이도를 바꾸거나 은행 크기를 알게 됐을 때, 고른 문제 수가 선택지에 없으면
+  // (은행보다 큼 등) 고를 수 있는 가장 가까운 아래 값으로 맞춘다.
+  const effectiveCount = countChoices.some((c) => c.value === questionCount)
+    ? questionCount
+    : ([...countChoices].reverse().find((c) => c.value <= questionCount) ?? countChoices[0]).value;
   const session = loadGroupSession();
   const [useGroup, setUseGroup] = useState<boolean>(!!session);
   const [teamMode, setTeamMode] = useState(false);
@@ -43,7 +64,9 @@ export function HostRooms() {
   useEffect(() => {
     gameSocket.connect();
     const offList = gameSocket.on('roomList', (msg) => {
-      if (msg.churchId === churchId) setRooms(msg.rooms);
+      if (msg.churchId !== churchId) return;
+      setRooms(msg.rooms);
+      if (msg.questionBank) setQuestionBank(msg.questionBank);
     });
     const offCreated = gameSocket.on('roomCreated', (msg) => {
       if (msg.hostKey) saveHostKey(msg.room.id, msg.hostKey);
@@ -71,7 +94,7 @@ export function HostRooms() {
       return;
     }
     if (hostPassword && hostPassword === pin) {
-      setFormError('진행자 비밀번호는 방 입장 PIN과 다르게 정해 주세요.');
+      setFormError('진행자 비밀번호는 방 PIN과 다르게 정해 주세요.');
       return;
     }
     setFormError(null);
@@ -83,7 +106,7 @@ export function HostRooms() {
       map,
       capacity,
       level,
-      questionCount,
+      questionCount: effectiveCount,
       teamMode,
       ...(useGroup && session ? { groupCode: session.code, groupPin: session.pin } : {}),
     });
@@ -133,18 +156,23 @@ export function HostRooms() {
             ))}
           </div>
           <p className="picker-label">문제 수를 골라주세요</p>
-          <div className="row">
-            {QUESTION_COUNT_OPTIONS.map((n) => (
+          <div className="row row-wrap">
+            {countChoices.map((c) => (
               <button
-                key={n}
-                className={`btn btn-sm ${questionCount === n ? 'btn-primary' : ''}`}
-                onClick={() => setQuestionCount(n)}
+                key={c.value}
+                className={`btn btn-sm ${effectiveCount === c.value ? 'btn-primary' : ''}`}
+                onClick={() => setQuestionCount(c.value)}
               >
-                {n}문제
+                {c.all ? `전체 ${c.value}문제` : `${c.value}문제`}
               </button>
             ))}
           </div>
-          <p className="picker-label">방 PIN (학생 입장용 숫자 4자리)</p>
+          {bankSize !== undefined && bankSize < MAX_QUESTION_COUNT && (
+            <p className="fine-print question-bank-note">
+              {LEVEL_LABELS[level]} 문제 은행은 {bankSize}문제예요. {bankSize}문제까지만 고를 수 있어요.
+            </p>
+          )}
+          <p className="picker-label">방 PIN (학생용, 숫자 4자리)</p>
           <input
             className="input"
             inputMode="numeric"
@@ -153,6 +181,7 @@ export function HostRooms() {
             value={pin}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
           />
+          <p className="fine-print">학생 입장용이에요. 친구들에게 알려 주는 번호예요.</p>
           <p className="picker-label">진행자 비밀번호 (선생님만, 영문·숫자 4~12자)</p>
           <input
             className="input"
@@ -162,21 +191,25 @@ export function HostRooms() {
             value={hostPassword}
             onChange={(e) => setHostPassword(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
           />
-          <p className="fine-print">방 PIN은 학생 입장용, 진행자 비밀번호는 진행자 화면을 다시 열 때 써요. 학생에게 알려 주지 마세요.</p>
+          <p className="fine-print">진행자 화면을 다른 기기에서 다시 열 때 써요. 학생에게 알려 주지 마세요.</p>
           {formError && <p className="form-error">{formError}</p>}
           <p className="picker-label">더 재미있게</p>
-          <div className="row">
-            <button type="button" className={`btn btn-sm ${teamMode ? 'btn-primary' : ''}`} onClick={() => setTeamMode((v) => !v)}>
+          <div className="row row-wrap toggle-row">
+            <button type="button" className={`btn btn-sm toggle-btn ${teamMode ? 'btn-primary' : ''}`} onClick={() => setTeamMode((v) => !v)}>
               팀 대결 {teamMode ? '켜짐' : '꺼짐'}
             </button>
-            {session ? (
-              <button type="button" className={`btn btn-sm ${useGroup ? 'btn-primary' : ''}`} onClick={() => setUseGroup((v) => !v)}>
-                {session.code} 반 출석·달란트 {useGroup ? '기록' : '안 함'}
+            {session && (
+              <button type="button" className={`btn btn-sm toggle-btn ${useGroup ? 'btn-primary' : ''}`} onClick={() => setUseGroup((v) => !v)}>
+                <span className="toggle-btn-code">{session.code}</span>
+                <span>반 출석·달란트 {useGroup ? '기록' : '안 함'}</span>
               </button>
-            ) : (
-              <span className="fine-print">출석·달란트 기록은 호스트 홈에서 반을 먼저 열어 주세요.</span>
             )}
           </div>
+          <p className="fine-print">
+            {session
+              ? '반 기록은 호스트 홈에서 교사 PIN(반 기록용, 숫자 4~8자리)으로 연 반에 남겨요.'
+              : '출석·달란트 기록은 호스트 홈에서 교사 PIN(반 기록용, 숫자 4~8자리)으로 반을 먼저 열어 주세요.'}
+          </p>
           <button className="btn btn-primary" onClick={createRoom} disabled={!title.trim()}>
             방 만들기
           </button>

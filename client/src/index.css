@@ -768,16 +768,6 @@ button {
   border-bottom: none;
 }
 
-.banner-ad-slot {
-  border: 3px dashed var(--text-dim);
-  border-radius: 0;
-  padding: 12px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-dim);
-  background: #eceef1;
-}
-
 .reveal-banner {
   width: 100%;
   padding: 14px;
@@ -1772,10 +1762,6 @@ button {
 .side-finished .setup-panel {
   order: 5;
 }
-.side-finished .banner-ad-slot {
-  order: 6;
-}
-
 .host-room-screen .scoreboard {
   flex-shrink: 0;
 }
@@ -2390,12 +2376,12 @@ button {
   opacity: 0.45;
 }
 
+/* A zero-size anchor at the player's spot: the sprite is centred on it and the
+   name tag is offset from it by PlayerMap's layout (so tags never overlap). */
 .player-map-avatar {
   position: absolute;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
   transition: left 0.1s linear, top 0.1s linear;
   pointer-events: none;
   z-index: 1;
@@ -2410,13 +2396,20 @@ button {
 }
 
 .player-map-sprite {
+  position: absolute;
+  left: 0;
+  top: 0;
   line-height: 0;
   transition: transform 0.08s linear;
 }
 
 .player-map-name {
-  margin-top: 1px;
-  max-width: 90px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  max-width: 72px;
+  line-height: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2429,6 +2422,7 @@ button {
 
 .player-map-avatar.me .player-map-name {
   font-size: 11px;
+  line-height: 15px;
   background: #ffe066;
   border-width: 2px;
 }
@@ -2486,4 +2480,170 @@ button {
   min-height: 40px;
   font-size: 13px;
   border-width: 3px;
+}
+
+/* ======================================================================
+   실전 가이드 점검 반영 (fix/guide-findings)
+   ====================================================================== */
+
+/* ---- 방 만들기: 버튼 글자가 줄바꿈되거나 잘리지 않게 ---- */
+.row-wrap {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.row-wrap > .btn {
+  white-space: nowrap;
+}
+
+/* 켜짐/꺼짐 토글: 글자는 한 줄로, 자리가 모자라면 버튼이 다음 줄로 내려간다.
+   반 코드가 아주 길 때만 코드 부분을 말줄임(…)하고 뒤 문구는 항상 다 보인다. */
+.toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.toggle-btn > span {
+  flex: none;
+  white-space: nowrap;
+}
+
+.toggle-btn > .toggle-btn-code {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.question-bank-note {
+  margin-top: -4px;
+}
+
+/* ---- 팀 점수: 합계·평균 숫자를 또렷하게 ----
+   (가는 회색 작은 글씨의 픽셀 폰트 "18"이 "13"처럼 읽혔다) */
+.result-team-score {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-weight: 700;
+}
+
+.result-team-stat {
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.result-team-stat b {
+  font-size: 1.3em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.result-team-stat.dim {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.team-box-score {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-team-score {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.9em;
+  font-weight: 700;
+}
+
+/* ---- 학생 문제 화면: 채점 규칙 한 줄 ---- */
+.play-hint.play-rule {
+  font-weight: 700;
+  color: var(--text);
+  word-break: keep-all;
+  text-wrap: balance;
+}
+
+/* ---- 달란트 상점: 폰에서 옷 줄이 화면 아래로 잘리지 않게 ----
+   미리보기를 작게 줄여 옆에 정보(착용·주간 상한)를 붙이고 카드도 조금 낮춰서,
+   모자·옷 줄이 스크롤 없이 한 화면에 다 들어온다. 나머지는 상점 안에서 스크롤. */
+.shop-overlay {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: max(clamp(8px, 1.5vw, 28px), env(safe-area-inset-bottom));
+}
+
+.shop-item {
+  min-width: 0;
+}
+
+.shop-btn {
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .shop-panel {
+    gap: 8px;
+    padding: 10px;
+  }
+  .shop-title {
+    font-size: 1.35em;
+  }
+  .shop-body {
+    gap: 8px;
+  }
+  .shop-side {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 4px 10px;
+    align-items: start;
+  }
+  .shop-preview {
+    grid-row: 1 / span 3;
+    height: 124px;
+  }
+  .shop-preview-label {
+    text-align: left;
+  }
+  .shop-notice {
+    grid-column: 1 / -1;
+    padding: 5px 8px;
+  }
+  .cap-box {
+    padding: 4px 8px;
+  }
+  .cap-box .fine-print {
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .shop-catalog {
+    gap: 6px;
+  }
+  .shop-section-title {
+    margin-bottom: 3px;
+  }
+  .shop-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .shop-item {
+    gap: 1px;
+    padding: 5px 5px 6px;
+  }
+  .shop-item-look {
+    padding: 2px 8px 0;
+  }
+  .shop-item-look svg {
+    width: 40px;
+    height: 40px;
+  }
+  .shop-btn {
+    padding: 4px 2px;
+  }
 }

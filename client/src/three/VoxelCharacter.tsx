@@ -17,6 +17,13 @@ const BODY_Y = LEG_TOP + BODY_H / 2;
 const SHOULDER_Y = LEG_TOP + BODY_H - 0.08;
 const HEAD_Y = SHOULDER_Y + 0.42;
 
+export const NAME_TAG_DISTANCE_FACTOR = 11;
+
+/** 이름표가 뜨는 높이 (캐릭터 기준 단위, scale 을 곱하기 전). 상점 모자를 쓰면 조금 더 높다. */
+export function nameTagHeight(hasShopHat: boolean, labelLift = 0): number {
+  return HEAD_Y + (hasShopHat ? 0.85 : 0.6) + labelLift;
+}
+
 export type RevealState = 'idle' | 'correct' | 'wrong';
 
 function Hat({ type }: { type: HatType }) {
@@ -261,7 +268,7 @@ export function VoxelCharacter({
         </group>
 
         {showLabel && nickname && (
-          <Html position={[0, HEAD_Y + (shopHat ? 0.85 : 0.6) + labelLift, 0]} center distanceFactor={11} occlude={false}>
+          <Html position={[0, nameTagHeight(!!shopHat, labelLift), 0]} center distanceFactor={NAME_TAG_DISTANCE_FACTOR} occlude={false}>
             <div className={`voxel-name-tag ${labelSmall ? 'small' : ''}`}>{nickname}</div>
           </Html>
         )}

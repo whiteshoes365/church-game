@@ -1,5 +1,5 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { DEFAULT_LEVEL, DEFAULT_QUESTION_COUNT, normalizeLevel, selectQuizQuestions } from './questions.js';
+import { DEFAULT_QUESTION_COUNT, normalizeLevel, questionsForLevel, selectQuizQuestions } from './questions.js';
 
 export const QUESTION_DURATION_MS = 15000;
 
@@ -117,15 +117,76 @@ export function requestPlayerJump(room, deviceId) {
   player.motion.jumpRequested = true;
 }
 
+// O/X 구역 안의 "설 자리" 격자. 여러 명이 같은 구역으로 걸어가도 한가운데에
+// 겹쳐 서지 않도록, 인원이 늘수록 더 촘촘한 격자를 쓴다. 줄마다 반 칸씩 엇갈려
+// 이름표가 앞뒤 줄끼리 덜 가리게 한다. 모든 자리는 구역 안쪽(가장자리에서 떨어진 곳)이다.
+const ZONE_SLOT_GRIDS = [
+  [3, 4],
+  [4, 5],
+  [5, 6],
+  [7, 8],
+  [9, 10],
+];
+
+export function zoneSlots(box, cols, rows) {
+  const sx = (box.xmax - box.xmin) / cols;
+  const sz = (box.zmax - box.zmin) / rows;
+  const stagger = Math.max(0, Math.min(sx * 0.25, sx / 2 - 0.35));
+  const slots = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      slots.push({
+        x: box.xmin + sx * (c + 0.5) + (r % 2 === 0 ? -stagger : stagger),
+        z: box.zmin + sz * (r + 0.5),
+      });
+    }
+  }
+  return { slots, clear: Math.min(sx, sz) * 0.6 };
+}
+
+function inBox(pos, box) {
+  return pos.x >= box.xmin && pos.x <= box.xmax && pos.z >= box.zmin && pos.z <= box.zmax;
+}
+
+// 이 구역에서 아직 비어 있는 자리 중, 지금 위치에서 가장 가까운 곳을 고른다.
+// "차 있음" = 다른 친구가 그 근처에 서 있거나, 그 근처로 걸어가는 중.
+export function pickZoneSlot(room, deviceId, zone) {
+  const box = ZONES[zone];
+  const me = room.players.get(deviceId);
+  if (!box || !me) return null;
+  const taken = [];
+  for (const other of room.players.values()) {
+    if (other.id === deviceId) continue;
+    const m = other.motion;
+    if (m.autoTarget) {
+      if (inBox(m.autoTarget, box)) taken.push(m.autoTarget);
+    } else if (inBox(m.pos, box)) {
+      taken.push(m.pos);
+    }
+  }
+  for (const [cols, rows] of ZONE_SLOT_GRIDS) {
+    const { slots, clear } = zoneSlots(box, cols, rows);
+    let best = null;
+    for (const slot of slots) {
+      if (taken.some((t) => Math.hypot(t.x - slot.x, t.z - slot.z) < clear)) continue;
+      const d = Math.hypot(slot.x - me.motion.pos.x, slot.z - me.motion.pos.z);
+      if (!best || d < best.d) best = { slot, d };
+    }
+    if (best) return best.slot;
+  }
+  // 격자가 다 찰 만큼 많으면(구역당 90명 초과) 구역 안 아무 곳으로.
+  return {
+    x: box.xmin + 0.5 + Math.random() * (box.xmax - box.xmin - 1),
+    z: box.zmin + 0.5 + Math.random() * (box.zmax - box.zmin - 1),
+  };
+}
+
 export function setAutoWalkTarget(room, deviceId, zone) {
   const player = room.players.get(deviceId);
   if (!player) return;
-  const box = ZONES[zone];
-  if (!box) return;
-  player.motion.autoTarget = {
-    x: (box.xmin + box.xmax) / 2,
-    z: (box.zmin + box.zmax) / 2,
-  };
+  const slot = pickZoneSlot(room, deviceId, zone);
+  if (!slot) return;
+  player.motion.autoTarget = { x: slot.x, z: slot.z };
 }
 
 export function tickRoomPhysics(room, dtMs) {
@@ -192,10 +253,15 @@ export function tickRoomPhysics(room, dtMs) {
 
   // Simple pairwise separation so avatars don't overlap heavily. O(n^2) is
   // fine at the player counts this game supports (dozens per room).
+  // An avatar that is auto-walking to its O/X spot passes through others until
+  // it arrives: every auto-walker has its own reserved spot, and spots sit in
+  // straight rows, so pushing would shove an already-standing player off their
+  // spot (or stall two walkers meeting head-on in the same row).
   for (let i = 0; i < players.length; i++) {
     for (let j = i + 1; j < players.length; j++) {
       const a = players[i].motion;
       const b = players[j].motion;
+      if (a.autoTarget || b.autoTarget) continue;
       const dx = b.pos.x - a.pos.x;
       const dz = b.pos.z - a.pos.z;
       const dist = Math.hypot(dx, dz);
@@ -259,7 +325,7 @@ export function listRooms(churchId) {
   return [...rooms.values()].filter((r) => r.churchId === churchId);
 }
 
-// 방 입장 PIN: 숫자 4자리. 호스트가 정하지 않으면 자동으로 만든다.
+// 방 PIN(학생 입장용): 숫자 4자리. 호스트가 정하지 않으면 자동으로 만든다.
 // (교사용 반 기록 PIN 과는 별개 — 이건 학생들에게 불러 주는 번호)
 export function normalizeRoomPin(pin) {
   if (pin === undefined || pin === null || pin === '') return String(randomInt(0, 10000)).padStart(4, '0');
@@ -268,7 +334,7 @@ export function normalizeRoomPin(pin) {
   return p;
 }
 
-// 진행자(호스트) 비밀번호: 방 입장 PIN 과 별개. 학생에게 불러 주는 PIN 만으로는
+// 진행자(호스트) 비밀번호: 방 PIN 과 별개. 학생에게 불러 주는 PIN 만으로는
 // 진행자 화면을 열 수 없다. 정하지 않으면 숫자 6자리를 자동으로 만든다.
 export function normalizeHostPassword(password) {
   if (password === undefined || password === null || password === '') return String(randomInt(0, 1000000)).padStart(6, '0');
@@ -279,8 +345,15 @@ export function normalizeHostPassword(password) {
 
 export function setHostPassword(room, password) {
   const p = normalizeHostPassword(password);
-  if (p === room.pin) throw new Error('진행자 비밀번호는 방 입장 PIN과 다르게 정해 주세요.');
+  if (p === room.pin) throw new Error('진행자 비밀번호는 방 PIN과 다르게 정해 주세요.');
   room.hostPassword = p;
+}
+
+// 문제 수는 그 난이도 문제 은행 크기를 넘을 수 없다 (은행이 18문제면 30을 골라도 18).
+export function clampQuestionCount(level, count) {
+  const bank = questionsForLevel(level).length;
+  const wanted = count ? Math.max(1, Math.round(Number(count)) || DEFAULT_QUESTION_COUNT) : DEFAULT_QUESTION_COUNT;
+  return Math.max(1, Math.min(wanted, bank));
 }
 
 export function createRoom({ churchId, title, map, capacity, questionSeconds, level, questionCount, pin, hostPassword }) {
@@ -289,14 +362,13 @@ export function createRoom({ churchId, title, map, capacity, questionSeconds, le
   const roomHostPassword = normalizeHostPassword(hostPassword);
   let roomPin = normalizeRoomPin(pin);
   if (roomPin === roomHostPassword) {
-    if (pin) throw new Error('진행자 비밀번호는 방 입장 PIN과 다르게 정해 주세요.');
+    if (pin) throw new Error('진행자 비밀번호는 방 PIN과 다르게 정해 주세요.');
     while (roomPin === roomHostPassword) roomPin = normalizeRoomPin(); // 자동 PIN 이 우연히 같으면 다시 뽑는다
   }
   const room = {
     id: randomUUID(),
     pin: roomPin,
     hostPassword: roomHostPassword,
-    hostFails: { count: 0, lockedUntil: 0 }, // 진행자 비밀번호 틀린 횟수 (방 단위)
     hostKey: randomUUID(), // 방을 만든 브라우저만 아는 값 (호스트 화면 다시 열 때 확인)
     churchId,
     title: (title || '방').trim(),
@@ -306,7 +378,7 @@ export function createRoom({ churchId, title, map, capacity, questionSeconds, le
     hostSocket: null,
     players: new Map(), // deviceId -> player
     status: 'lobby', // lobby | question | reveal | finished
-    questionCount: questionCount ? Math.max(1, Math.round(Number(questionCount))) : DEFAULT_QUESTION_COUNT,
+    questionCount: clampQuestionCount(level, questionCount),
     questions: [],
     currentIndex: -1,
     answers: new Map(), // deviceId -> 'O' | 'X'
@@ -359,7 +431,7 @@ export function joinRoom(room, { deviceId, nickname, avatar }) {
 
 export function startQuiz(room, questionCount) {
   clearTimer(room);
-  const count = questionCount ? Math.max(1, Math.round(Number(questionCount))) : room.questionCount;
+  const count = clampQuestionCount(room.level, questionCount || room.questionCount);
   const excludeIds = recentIdsForChurch(room.churchId);
   room.questions = selectQuizQuestions({ level: room.level, count, excludeIds });
   recordPlayedForChurch(room.churchId, room.questions.map((q) => q.id));
@@ -452,6 +524,7 @@ export function serializeRoom(room, { forHost = false } = {}) {
     map: room.map,
     level: room.level,
     capacity: room.capacity,
+    questionCount: room.questionCount,
     status: room.status,
     players: [...room.players.values()].map((p) => ({
       id: p.id,
@@ -552,8 +625,9 @@ export function assignTeam(room, playerId, teamId) {
   player.teamId = teamId;
 }
 
-// 팀 점수 = 팀원 정답 수의 평균(소수 2자리). 인원이 달라도 공평하도록
-// 승패는 평균으로 가린다. 합계도 함께 보여 준다. 팀원이 없는 팀은 제외.
+// 팀 점수: 합계 = 팀원 점수의 합, 평균 = 합계 ÷ 팀원 수(소수 2자리).
+// 인원이 달라도 공평하도록 승패는 평균으로 가린다. 합계와 평균은 항상 같은
+// 팀원 목록(memberIds)에서 한 번에 계산한다.
 export function teamStandings(room) {
   return TEAM_DEFS.slice(0, room.team.count)
     .map((def) => {
@@ -566,6 +640,7 @@ export function teamStandings(room) {
         size: members.length,
         total,
         average: members.length ? Math.round((total / members.length) * 100) / 100 : 0,
+        memberIds: members.map((p) => p.id),
       };
     });
 }

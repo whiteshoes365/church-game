@@ -106,11 +106,12 @@ export function HostHome() {
           value={groupCode}
           onChange={(e) => setGroupCode(e.target.value)}
         />
+        <p className="picker-label">교사 PIN (반 기록용, 숫자 4~8자리)</p>
         <input
           className="input"
           type="password"
           inputMode="numeric"
-          placeholder="교사 PIN (숫자 4~8자리)"
+          placeholder="숫자 4~8자리"
           value={groupPin}
           onChange={(e) => setGroupPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
         />

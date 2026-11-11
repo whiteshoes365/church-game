@@ -30,6 +30,7 @@ import {
   buildFinalResult,
   setHostPassword,
 } from './state.js';
+import { LEVELS, QUESTIONS_BY_LEVEL } from './questions.js';
 import {
   openGroup,
   normalizeCode,
@@ -49,6 +50,7 @@ import {
 } from './records.js';
 
 const PORT = Number(process.env.PORT) || 8787;
+const QUESTION_BANK = Object.fromEntries(LEVELS.map((level) => [level, QUESTIONS_BY_LEVEL[level].length]));
 const POSITIONS_BROADCAST_MS = 80; // ~12.5 Hz, within the 10-15 Hz target
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
@@ -96,12 +98,13 @@ function failJoin(socket) {
 
 // ---- 진행자(호스트) 비밀번호 ----
 // 방을 만든 브라우저(hostKey)는 항상 통과. 그 밖에는 진행자 비밀번호가 맞아야 한다.
-// 방 입장 PIN 으로는 열 수 없다. 5번 틀리면 30초 잠금(접속 단위 + 방 단위).
+// 방 PIN 으로는 열 수 없다. 5번 틀리면 30초 잠금 — 틀린 그 접속(소켓)만 잠긴다.
+// 방 전체를 잠그지 않으므로, 한 기기가 일부러 틀려도 다른 기기는 계속 시도할 수 있다.
 // 없는 방이어도 같은 문구로 답해서 방이 있는지 알려 주지 않는다.
 const HOST_MAX_FAILS = 5;
 const HOST_LOCK_MS = 30000;
 const HOST_LOCK_MESSAGE = '진행자 비밀번호를 여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.';
-const HOST_FAIL_MESSAGE = '진행자 비밀번호가 맞지 않아요. 방 입장 PIN이 아니라 선생님용 진행자 비밀번호를 입력해 주세요.';
+const HOST_FAIL_MESSAGE = '진행자 비밀번호가 맞지 않아요. 방 PIN이 아니라 선생님용 진행자 비밀번호를 입력해 주세요.';
 
 function bumpFail(f) {
   f.count += 1;
@@ -117,15 +120,13 @@ function checkHostAccess(socket, room, msg) {
   const supplied = typeof msg.hostPassword === 'string' && msg.hostPassword.length > 0;
   if (!supplied) return 'need';
   const now = Date.now();
-  if (socket.hostFails.lockedUntil > now || (room && room.hostFails.lockedUntil > now)) throw new Error(HOST_LOCK_MESSAGE);
+  if (socket.hostFails.lockedUntil > now) throw new Error(HOST_LOCK_MESSAGE);
   if (room && msg.hostPassword === room.hostPassword) {
     socket.hostFails.count = 0;
-    room.hostFails.count = 0;
     return 'ok';
   }
   bumpFail(socket.hostFails);
-  if (room) bumpFail(room.hostFails);
-  throw new Error(socket.hostFails.lockedUntil > now || (room && room.hostFails.lockedUntil > now) ? HOST_LOCK_MESSAGE : HOST_FAIL_MESSAGE);
+  throw new Error(socket.hostFails.lockedUntil > now ? HOST_LOCK_MESSAGE : HOST_FAIL_MESSAGE);
 }
 
 // 홈 화면 상점에서 산/착용한 아이템을, 그 친구가 지금 들어가 있는 방 캐릭터에도 바로 반영한다.
@@ -164,8 +165,13 @@ const PIN_LOCK_MS = 60000;
 
 function authGroup(socket, code, pin, create) {
   const c = normalizeCode(code);
+  // 이 접속이 이미 교사 PIN 으로 연 반이면 PIN 을 다시 묻지 않는다
+  // (같은 진행자 화면에서 장부로 넘어가는 경우). 인증 안 된 접속은 아래 검사를 그대로 거친다.
+  if ((pin === undefined || pin === null || pin === '') && !create && socket.groupAuth.has(c)) {
+    return { code: c, created: false };
+  }
   const f = pinFailures.get(c);
-  if (f && f.lockedUntil > Date.now()) throw new Error('PIN을 여러 번 틀렸어요. 1분 뒤에 다시 시도해 주세요.');
+  if (f && f.lockedUntil > Date.now()) throw new Error('교사 PIN을 여러 번 틀렸어요. 1분 뒤에 다시 시도해 주세요.');
   let result;
   try {
     result = openGroup(c, pin, { create: !!create });
@@ -230,7 +236,8 @@ function finalizeGame(room) {
         ? {
             bonus: result.team.bonus,
             tie: result.team.tie,
-            teams: result.team.teams,
+            // 장부에는 기기 id(memberIds)를 남기지 않는다.
+            teams: result.team.teams.map(({ memberIds, ...t }) => t),
             winnerTeamIds: result.team.winnerTeamIds,
             names: Object.fromEntries(result.team.teams.map((t) => [t.id, t.name])),
           }
@@ -348,7 +355,8 @@ function handleMessage(socket, msg) {
       const church = getChurch(msg.churchId);
       if (!church) throw new Error('교회를 찾을 수 없어요.');
       const rooms = listRooms(msg.churchId).map(serializeRoomSummary);
-      send(socket, 'roomList', { churchId: msg.churchId, rooms });
+      // questionBank: 난이도별 문제 은행 크기 (방 만들기 화면이 문제 수 선택지를 여기에 맞춘다)
+      send(socket, 'roomList', { churchId: msg.churchId, rooms, questionBank: QUESTION_BANK });
       break;
     }
 
@@ -381,7 +389,7 @@ function handleMessage(socket, msg) {
 
     case 'hostOpenRoom': {
       const room = getRoom(msg.roomId);
-      // 진행자 화면: 방을 만든 브라우저(hostKey) 또는 진행자 비밀번호. 방 입장 PIN 으로는 열 수 없다.
+      // 진행자 화면: 방을 만든 브라우저(hostKey) 또는 진행자 비밀번호. 방 PIN 으로는 열 수 없다.
       if (checkHostAccess(socket, room, msg) !== 'ok') {
         send(socket, 'hostAuthRequired', { roomId: msg.roomId, message: '진행자 화면을 열려면 선생님용 진행자 비밀번호를 입력해 주세요.' });
         break;
@@ -393,7 +401,7 @@ function handleMessage(socket, msg) {
     }
 
     case 'joinRoom': {
-      if (socket.joinFails.lockedUntil > Date.now()) throw new Error('PIN을 여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.');
+      if (socket.joinFails.lockedUntil > Date.now()) throw new Error('방 PIN을 여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.');
       const room = getRoom(msg.roomId);
       if (!msg.deviceId || typeof msg.deviceId !== 'string') throw new Error('기기 정보를 확인할 수 없어요. 새로고침 후 다시 들어와 주세요.');
       // 이미 이 방에 들어와 있던 기기(새로고침·재접속)는 PIN 을 다시 묻지 않는다.

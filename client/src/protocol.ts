@@ -48,8 +48,9 @@ export interface TeamStanding {
   name: string;
   color: string;
   size: number;
-  total: number;
-  average: number;
+  total: number; // 합계 = 팀원 점수의 합
+  average: number; // 평균 = 합계 ÷ 팀원 수
+  memberIds?: string[]; // 이 점수를 낸 팀원들
 }
 
 export interface TeamState {
@@ -204,13 +205,14 @@ export interface PlayerPosition {
 
 export interface RoomSnapshot {
   id: string;
-  pin?: string; // 호스트에게만 내려오는 방 입장 PIN
+  pin?: string; // 호스트에게만 내려오는 방 PIN (학생 입장용)
   hostPassword?: string; // 호스트에게만 내려오는 진행자 비밀번호 (방 PIN 과 별개)
   churchId: string;
   title: string;
   map: MapTheme;
   level: Level;
   capacity: Capacity;
+  questionCount?: number;
   status: RoomStatus;
   players: PlayerSnapshot[];
   hasHost: boolean;
