@@ -5,6 +5,14 @@
 //   리모컨       : https://church-game.onrender.com/#/remote/ABCDE     (진행자 비밀번호 필요)
 import type { RoomSnapshot } from './protocol';
 
+/** 서버와 같은 규칙: 대문자·숫자만, 헷갈리는 글자는 서버가 처음부터 쓰지 않는다. */
+export function normalizeJoinCode(code: string): string {
+  return String(code ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, '');
+}
+
 /** 지금 이 앱이 열려 있는 사이트 주소 (해시 앞부분). */
 export function appBase(): string {
   return `${location.origin}${location.pathname}`;

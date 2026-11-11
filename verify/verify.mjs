@@ -1892,6 +1892,20 @@ async function verifyDisplayRemote() {
     assert(!('answer' in snap.room.question) && !('explanation' in snap.room.question), `${who}에는 공개 전 정답·해설이 가지 않음`);
   }
   assert(dq0.room.question.text === rq0.room.question.text && sq0.room.question.text === rq0.room.question.text, '모든 화면이 같은 문제를 봄');
+  // 진행자·송출·리모컨이 동시에 붙어 있어도 상태(문제 번호·제목·인원·음악)가 같다
+  assert(
+    hq0.room.question.index === dq0.room.question.index &&
+      hq0.room.question.index === rq0.room.question.index &&
+      hq0.room.players.length === dq0.room.players.length &&
+      hq0.room.players.length === rq0.room.players.length &&
+      hq0.room.title === dq0.room.title &&
+      hq0.room.music?.track === rq0.room.music?.track &&
+      hq0.room.displayCount === 1 &&
+      hq0.room.remoteCount === 1 &&
+      dq0.room.displayCount === 1 &&
+      rq0.room.remoteCount === 1,
+    '동시 연결(진행자+송출+리모컨) 상태 일치',
+  );
   // 송출 화면도 캐릭터 위치를 받는다 (리모컨은 받지 않는다)
   await display.waitFor('positions', (m) => m.roomId === roomId);
   const status = await remote.waitFor('remoteStatus', (m) => m.roomId === roomId);

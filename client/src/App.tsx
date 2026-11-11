@@ -7,11 +7,15 @@ import { HostRooms } from './pages/HostRooms';
 import { HostRoom } from './pages/HostRoom';
 import { HostGroup } from './pages/HostGroup';
 import { PlayerShop } from './pages/PlayerShop';
+import { JoinByCode } from './pages/JoinByCode';
+import { DisplayRoom } from './pages/DisplayRoom';
+import { RemoteRoom } from './pages/RemoteRoom';
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<PlayerJoin />} />
+      <Route path="/j/:code" element={<JoinByCode />} />
       <Route path="/rooms/:churchId" element={<PlayerRooms />} />
       <Route path="/play/:roomId" element={<PlayerRoom />} />
       <Route path="/shop" element={<PlayerShop />} />
@@ -19,6 +23,10 @@ export default function App() {
       <Route path="/host/rooms/:churchId" element={<HostRooms />} />
       <Route path="/host/room/:roomId" element={<HostRoom />} />
       <Route path="/host/group/:code" element={<HostGroup />} />
+      <Route path="/display" element={<DisplayRoom />} />
+      <Route path="/display/:roomId" element={<DisplayRoom />} />
+      <Route path="/remote/pair/:pairCode" element={<RemoteRoom />} />
+      <Route path="/remote/:codeOrId" element={<RemoteRoom />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

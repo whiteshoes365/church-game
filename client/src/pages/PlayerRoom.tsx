@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import { getDeviceId } from '../deviceId';
 import { BODY_COLORS, DEFAULT_AVATAR_CONFIG, HATS, SKIN_TONES, encodeAvatar, type AvatarConfig } from '../avatars';
@@ -302,13 +302,15 @@ function MovementControls({ roomId, gait, children }: { roomId?: string; gait: G
 export function PlayerRoom() {
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const joinState = (location.state as { pinPrefill?: string; roomTitle?: string } | null) ?? null;
   const deviceId = useMemo(() => getDeviceId(), []);
 
   const [room, setRoom] = useState<RoomSnapshot | null>(null);
   const [positions, setPositions] = useState<Record<string, PlayerPosition>>({});
   const [joined, setJoined] = useState(false);
   const [nickname, setNickname] = useState('');
-  const [pin, setPin] = useState('');
+  const [pin, setPin] = useState(() => (/^\d{4}$/.test(joinState?.pinPrefill ?? '') ? joinState!.pinPrefill! : ''));
   const [shopOpen, setShopOpen] = useState(false);
   const [avatarConfig, setAvatarConfig] = useState<AvatarConfig>(DEFAULT_AVATAR_CONFIG);
   const avatar = useMemo(() => encodeAvatar(avatarConfig), [avatarConfig]);
@@ -375,7 +377,7 @@ export function PlayerRoom() {
       <div className="screen">
         <div className="screen-narrow stack">
           <h1 className="title">닉네임과 아바타를 골라주세요</h1>
-          <p className="subtitle">실명이나 전화번호는 필요 없어요</p>
+          <p className="subtitle">{joinState?.roomTitle ? `「${joinState.roomTitle}」 방이에요` : '실명이나 전화번호는 필요 없어요'}</p>
           <div className="pin-entry card">
             <p className="picker-label">방 PIN (학생용, 숫자 4자리)</p>
             <input
@@ -387,7 +389,11 @@ export function PlayerRoom() {
               value={pin}
               onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
             />
-            <p className="fine-print">선생님 화면에 크게 나와 있어요.</p>
+            <p className="fine-print">
+              {/^\d{4}$/.test(pin) && joinState?.pinPrefill === pin
+                ? 'QR에서 방 PIN을 미리 채웠어요. 맞는지 확인하고 입장해요.'
+                : '선생님 화면에 크게 나와 있어요.'}
+            </p>
           </div>
 
           {error && <p className="form-error join-error">{error}</p>}

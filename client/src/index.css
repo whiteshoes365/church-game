@@ -3311,3 +3311,386 @@ button {
 .gait-status.crawl b {
   color: #6a3fc0;
 }
+
+/* ---- 송출 화면 · QR · 리모컨 ---- */
+
+.badge-paused {
+  background: #f5c518;
+  color: #1c2330;
+}
+
+.badge-warn {
+  background: #c44536;
+  color: #fff;
+}
+
+.btn-danger {
+  background: #c44536;
+  color: #fff;
+  border-color: #8f2f24;
+}
+
+.stage-paused {
+  position: absolute;
+  inset: auto 12px 12px 12px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  background: rgba(28, 35, 48, 0.88);
+  color: #fff;
+  border: 3px solid #f5c518;
+  pointer-events: none;
+}
+
+.stage-paused b {
+  font-size: 1.1rem;
+}
+
+.stage-paused small {
+  color: #d7dde5;
+}
+
+.qr-box {
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 4px solid var(--border);
+  padding: 8px;
+  aspect-ratio: 1;
+  max-width: 100%;
+}
+
+.qr-box svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.qr-box.qr-loading {
+  min-height: 120px;
+  background: repeating-linear-gradient(45deg, #f0f2f5, #f0f2f5 8px, #e4e8ee 8px, #e4e8ee 16px);
+}
+
+.qr-box.qr-failed {
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 16px;
+}
+
+.join-text-url {
+  margin: 0;
+  font-size: 0.85rem;
+  word-break: break-all;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.display-screen {
+  min-height: 100vh;
+}
+
+.display-wait {
+  padding: 24px 32px 40px;
+  background: linear-gradient(160deg, #1c2330 0%, #2a3548 45%, #1c2330 100%);
+  color: #fff;
+}
+
+.display-wait .title,
+.display-wait .subtitle,
+.display-wait .card-title {
+  color: #fff;
+}
+
+.display-wait .subtitle {
+  opacity: 0.85;
+}
+
+.display-wait-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin-bottom: 20px;
+}
+
+.display-wait-head .title {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.display-wait-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+.display-wait .card {
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text);
+}
+
+.display-wait .card .subtitle,
+.display-wait .card .card-title {
+  color: var(--text);
+}
+
+.pair-code-big {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.pair-digit {
+  display: grid;
+  place-items: center;
+  width: 1.4em;
+  height: 1.7em;
+  font-size: clamp(36px, 5vw, 64px);
+  font-weight: 800;
+  background: #1c2330;
+  color: #f5c518;
+  border: 4px solid #000;
+  box-shadow: inset -4px -4px 0 0 rgba(0, 0, 0, 0.35), inset 4px 4px 0 0 rgba(255, 255, 255, 0.08);
+}
+
+.pair-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.qr-pair {
+  width: min(220px, 70vw);
+}
+
+.display-wait-foot {
+  margin-top: 24px;
+  text-align: center;
+  color: #b8c2cc;
+}
+
+.display-wait-foot a {
+  color: #f5c518;
+}
+
+.display-header .host-header-actions {
+  flex-wrap: wrap;
+}
+
+.display-qr-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 3px solid var(--border);
+}
+
+.display-qr-panel.lobby .qr-lobby {
+  width: min(100%, 260px);
+}
+
+.display-qr-panel.mini {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.display-qr-panel.mini .qr-mini {
+  width: 88px;
+}
+
+.display-screen.is-fullscreen .host-header {
+  padding-top: 8px;
+}
+
+@media (min-width: 1280px) {
+  .display-screen.host-room-screen {
+    padding: 16px 24px;
+  }
+  .display-main {
+    grid-template-columns: 1fr min(300px, 22vw);
+  }
+}
+
+@media (min-width: 1920px) {
+  .display-qr-panel.lobby .qr-lobby {
+    width: min(100%, 320px);
+  }
+  .pair-digit {
+    font-size: 72px;
+  }
+}
+
+.link-guide-panel {
+  gap: 8px;
+}
+
+.remote-guide,
+.join-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 2px dashed rgba(0, 0, 0, 0.12);
+}
+
+.qr-host-remote,
+.qr-host-join {
+  width: 140px;
+  align-self: center;
+}
+
+.host-home-links {
+  max-width: 520px;
+  margin: 0 auto 16px;
+}
+
+.remote-screen {
+  background: linear-gradient(180deg, #eef3f8 0%, #d9e3ef 100%);
+}
+
+.remote-stack {
+  gap: 12px;
+  padding-bottom: 32px;
+}
+
+.remote-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.remote-card {
+  gap: 10px;
+}
+
+.remote-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.remote-btn-grid .btn {
+  min-height: 48px;
+}
+
+.remote-question-text {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.remote-answer-peek {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 3px solid var(--border);
+  background: #fff;
+}
+
+.remote-answer-peek.o {
+  border-color: #1f8a4c;
+  background: #e7f7ee;
+}
+
+.remote-answer-peek.x {
+  border-color: #c44536;
+  background: #fdeceb;
+}
+
+.remote-answer-peek b {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.remote-zones {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.remote-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  border: 3px solid var(--border);
+  font-weight: 700;
+}
+
+.remote-zone.o {
+  background: #e7f7ee;
+  color: #1f8a4c;
+}
+
+.remote-zone.x {
+  background: #fdeceb;
+  color: #c44536;
+}
+
+.remote-zone.none {
+  background: #f0f2f5;
+  color: #5a6573;
+}
+
+.remote-player-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-player-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.remote-player-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.badge.side-o {
+  background: #1f8a4c;
+  color: #fff;
+}
+
+.badge.side-x {
+  background: #c44536;
+  color: #fff;
+}
+
+.qr-remote-self {
+  width: 160px;
+  align-self: center;
+}
+
+.question-banner.paused {
+  outline: 4px solid #f5c518;
+}
+
+.team-member-static {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}

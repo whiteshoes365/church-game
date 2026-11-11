@@ -29,10 +29,12 @@ interface Props {
   preview?: boolean;
   /** 진행 중 화면 머리줄에 넣는 한 줄짜리. */
   compact?: boolean;
+  /** 안내 글자. 비우면 기본 문구. 리모컨처럼 소리 안내가 다를 때 넣는다. */
+  hint?: string;
 }
 
 /** 배경 음악 고르기: 곡 선택 · 음악 끄기 · 소리 크기. 선택은 이 브라우저에 기억된다. */
-export function MusicPicker({ preview = false, compact = false }: Props) {
+export function MusicPicker({ preview = false, compact = false, hint }: Props) {
   const state = useMusicState();
 
   if (compact) {
@@ -99,7 +101,10 @@ export function MusicPicker({ preview = false, compact = false }: Props) {
       <VolumeSlider volume={state.volume} />
       {state.blocked && !preview && <p className="fine-print music-hint">화면을 한 번 누르면 음악이 시작돼요.</p>}
       <p className="fine-print music-hint">
-        {preview ? '고른 음악은 방을 열면 선생님 화면에서 나와요. 대기실에서도 바꿀 수 있어요.' : '음악은 이 화면(선생님 기기)에서만 나와요. 학생 폰에서는 나지 않아요.'}
+        {hint ??
+          (preview
+            ? '고른 음악은 방을 열면 선생님 화면에서 나와요. 대기실에서도 바꿀 수 있어요.'
+            : '음악은 이 화면(선생님 기기)에서만 나와요. 학생 폰에서는 나지 않아요.')}
       </p>
     </div>
   );
