@@ -1,87 +1,34 @@
 # RESULT
 
-## Remove 'general' category; 90/10 bible/nonsense mixing; drop joke framing (2026-11-05)
+## Supabase 기록 저장 (2026-11-11)
 
-The question bank was re-curated by the owner down to 86 bible-only questions
-(elementary 18, middle 25, high 22, youth 21; 0 general, 0 nonsense). This change
-removes the `general`(상식) category from the whole stack, switches mixing to
-~90% bible / 10% nonsense, and hardens `verify.mjs` for the smaller bank and a
-flaky score assertion. `toss-app/` and `server/data/questions/*.json` content were
-not touched.
+- 운영 기록은 무료 플랜 기존 프로젝트(ref `dilqbdgzzgrhstcytonl`)에 저장합니다. 표시 이름은 대시보드 Settings → General에서 `church`로 바꿔 주세요(커넥터에 이름 변경 도구 없음).
+- 찬양 튜너 테이블은 `public`에 그대로 두고, 게임 기록만 스키마 `church_game`에 둡니다: `classes`, `members`, `attendance`, `talent_ledger`, `shop_items`, `games`.
+- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`가 있으면 Supabase, 없으면 로컬 JSON(기존 `npm run verify` 경로).
+- RLS 켜짐, 정책 없음, anon/authenticated 권한 없음. Data API를 쓰려면 Settings → API → Exposed schemas에 `church_game`을 추가해야 합니다.
+- 실제 DB 검사: `npm run verify:supabase` (끝나면 테스트 행 삭제).
 
-## Server (`server/src/questions.js`)
 
-- `CATEGORIES` is now `['bible', 'nonsense']`; `CATEGORY_LABELS` drops `general`.
-- `CATEGORY_RATIOS` is now `{ bible: 0.9, nonsense: 0.1 }` (was 0.7/0.2/0.1).
-- `loadAllQuestions()` now throws if any question's `category` isn't in
-  `CATEGORIES` — a stray `general` question in a data file fails server startup
-  instead of silently loading.
-- `selectQuizQuestions` logic (fallback to the other category, then the full
-  level pool, when one runs short; capped to pool size with no error when the
-  bank is smaller than the requested count; no repeats) was already written
-  generically against `CATEGORIES` and needed no changes.
+## 홈 화면 달란트 상점 · 진행자 비밀번호 분리 · 대기실 다리 잘림 수정 (2026-11-11)
 
-## Client
+- **커밋**: `3febe78` (branch `wip/fun-features`, 이전 기능 커밋 `ed7a345`). push·배포는 하지 않았습니다. `퀴즈검토_176문제.xlsx`는 건드리지 않았습니다.
 
-- `protocol.ts`: `Category` type is now `'bible' | 'nonsense'`.
-- `categories.ts`: `CATEGORY_LABELS`/`CATEGORY_CLASS` drop the `general` entry.
-- `index.css`: removed `--category-general` and `.category-general` rule. The
-  `general` category tag was never a distinct "joke" label — `넌센스` already
-  reads as a plain category name, so no UI copy changes were needed there.
-- No other client code references categories by name (badges key off the maps
-  above generically), so nothing else to change.
+**바뀐 점**
+1. **홈 화면 달란트 상점**: 학생 첫 화면에 "달란트 상점" 버튼 추가(`/#/shop`). 반 코드 + 내 닉네임으로 들어가며, 그 닉네임을 방에서 먼저 등록한 기기만 열 수 있습니다. 없는 반·없는 닉네임(같은 안내), 주인이 아직 없는 닉네임, 다른 친구 닉네임은 거절합니다. 방 안 상점과 같은 지갑·같은 11개 아이템·같은 규칙(잔액 음수 불가, 보유 아이템 재차감 없음)이고, 홈에서 산 아이템은 들어가 있는 방의 캐릭터에도 바로 보입니다. 확인 5회 실패 시 30초 잠금.
+2. **진행자 비밀번호**: 방 PIN과 별개(영문·숫자 4~12자). 방 만들 때 정하고(비우면 숫자 6자리 자동, 반 기록을 연 선생님은 교사 PIN이 기본값), 진행자가 대기실에서 변경 가능. 방 PIN으로는 진행자 화면을 열 수 없습니다. 5회 틀리면 30초 잠금(접속 단위 + 방 단위), 없는 방도 같은 문구. 방을 만든 브라우저는 비밀번호 없이 다시 열립니다. 학생에게 가는 데이터에는 PIN·비밀번호가 없습니다.
+3. **대기실**: 캐릭터를 지도 가운데쯤에 세워 다리가 화면 아래로 잘리지 않습니다.
 
-## `scripts/add-week.mjs` / `docs/WEEKLY.md` / `docs/example-week.json`
+**테스트**
+- `npm run build` 통과. `npm run verify` 최종 코드로 3회 연속 `ALL CHECKS PASSED` (검사 단계 15개 모두 ok, assert 231개).
+- 새 테스트: 홈 상점(주인 기기 통과, 없는 반/닉네임·남의 닉네임·주인 없는 닉네임 거절, 잔액·구입·착용·재구입 무차감·잔액 부족 거절, 방 안 상점과 잔액 일치, 장부 기록, 5회 실패 잠금), 진행자 비밀번호(자동 생성, 형식 검사, PIN과 같으면 거절, 비밀번호로 열기, 변경, 방 PIN만으로는 거절, 없는 방 같은 문구, 5회 실패 잠금, 잠금 중에도 호스트 키는 통과).
 
-- `add-week.mjs`: recommended-count warning logic now checks bible(90%)/
-  nonsense(10%) instead of bible/general/nonsense. `category` validation
-  already rejects anything outside `CATEGORIES` (imported from
-  `questions.js`), so a `general` question now fails with `category 값이
-  올바르지 않아요: "general" (허용: bible, nonsense)` and a non-zero exit —
-  verified explicitly in `verify.mjs`.
-- `WEEKLY.md`: ratio table updated to bible 90%/~27 and nonsense 10%/~3 (30-
-  question basis); explains the fallback-to-other-category and capped-count-
-  when-bank-is-small behavior; dropped the `general` row from the field table
-  and the recommended-count line.
-- `example-week.json`: replaced the 4 `general` sample questions with 3 new
-  `bible` questions (one per... all 4 levels) with unique text not present in
-  the real bank; still passes `--dry-run` validation without writing.
+**캡처** `/workspace/church-ox-screenshots/` (각각 `w1280-`, `w1920-`)
+- 새로 추가: `home-shop`, `home-shop-entry`, `home-shop-not-owner`, `host-password`(방 PIN을 넣어 거절된 화면), `host-password-create`(방 만들기에서 설정), `lobby`(다리 잘림 수정 + 진행자 비밀번호 표시)
+- 다시 찍음: `room-pin-host-lobby`, `room-pin-player-wrong`, `nickname-duplicate-error`, `shop`, `team-playing`, `team-result`, `player-result`, `attendance`, `weekly-cap`, `weekly-cap-person-ledger`, `games`, `host-home`
 
-## `verify/verify.mjs`
+**이후 수정**
+- 대기실 오른쪽 패널의 진행자 비밀번호는 처음부터 가린 상태(점 표시)로 두고, "보기"를 눌러야 보여요. (커밋은 이 파일과 함께 기록)
 
-- **Flaky score fix**: replaced the per-player `waitUntilInZone` + `Promise.all`
-  pattern (which could pass each player's arrival check at a different tick,
-  letting avatar-separation physics knock an earlier arrival back out of its
-  zone before reveal) with a single `waitUntilAllInZones` helper that waits for
-  one `positions` broadcast where *all* players are simultaneously inside their
-  chosen zone, with a generous timeout (`ZONE_ARRIVAL_TIMEOUT_MS`: 10s local /
-  20s remote) before calling `reveal`. The old single-player `waitUntilInZone`
-  helper (now unused) was removed.
-- **Category mix test**: now computes the elementary bank's actual pool size
-  and nonsense count at runtime instead of asserting hardcoded 30/21/6/3; when
-  the bank has no nonsense questions it asserts the whole game is bible-only,
-  otherwise it asserts the nonsense share is within ±2 of the 10% target. It
-  also asserts the game length equals `min(DEFAULT_QUESTION_COUNT, poolSize)`,
-  covering the "capped, no error, no repeats" requirement for a level whose
-  bank (18) is smaller than the default count (30).
-- **Recent-avoidance test**: game size is now derived from the middle-level
-  bank size (`min(10, floor(poolSize/2) - 1)`) instead of a hardcoded 10, so
-  the test stays valid (guaranteed non-overlapping fresh margin) even if the
-  bank shrinks further later. Comment/assert text no longer references the old
-  30-question/general-era numbers.
-- **New add-week test**: spawns `add-week.mjs --dry-run` on a file with
-  `category: 'general'` and asserts non-zero exit and that stderr mentions
-  `category`/`general`.
-- `VERIFY_WS_URL` / remote timeout support unchanged.
-
-## Verification performed
-
-- `npm run build` — passes (`tsc` clean, `vite build` succeeds).
-- `npm run verify` — passes, run **5 times** consecutively (clean 0-exit, "ALL
-  CHECKS PASSED" every time), including the new capped-count/all-bible-fallback
-  category assertions, the adaptive recent-avoidance test, the new
-  `general`-rejection test, and no flakes from the zone-arrival/score fix.
-
-No commit was made; the working tree (plus the pre-existing, untouched
-`server/data/questions/2026-45.json` diff and the stray `.xlsx` file from the
-owner) is left for review.
+**남은 문제**
+- 홈 상점은 닉네임을 등록한 기기에서만 열립니다. 폰을 바꾸면 교사가 "닉네임 기기 연결 풀기"를 한 뒤 방에 다시 들어와야 합니다.
+- 방 단위 잠금 때문에 학생이 일부러 틀려서 다른 기기의 비밀번호 입력을 30초씩 막을 수 있습니다(방을 만든 브라우저는 영향 없음).

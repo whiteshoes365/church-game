@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import type { Capacity, Level, MapTheme, RoomSummary } from '../protocol';
+import { loadGroupSession } from '../groupSession';
+import { saveHostKey } from '../hostKeys';
 import { DEFAULT_LEVEL, LEVEL_CLASS, LEVEL_LABELS, LEVEL_OPTIONS } from '../levels';
 
 const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
@@ -30,6 +32,13 @@ export function HostRooms() {
   const [capacity, setCapacity] = useState<Capacity>(8);
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
   const [questionCount, setQuestionCount] = useState<number>(30);
+  const session = loadGroupSession();
+  const [useGroup, setUseGroup] = useState<boolean>(!!session);
+  const [teamMode, setTeamMode] = useState(false);
+  const [pin, setPin] = useState('');
+  // 진행자 비밀번호: 반 기록을 열어 둔 선생님은 교사 PIN 을 기본값으로 (바꿀 수 있음)
+  const [hostPassword, setHostPassword] = useState(() => session?.pin ?? '');
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     gameSocket.connect();
@@ -37,20 +46,47 @@ export function HostRooms() {
       if (msg.churchId === churchId) setRooms(msg.rooms);
     });
     const offCreated = gameSocket.on('roomCreated', (msg) => {
+      if (msg.hostKey) saveHostKey(msg.room.id, msg.hostKey);
       navigate(`/host/room/${msg.room.id}`);
     });
+    const offError = gameSocket.on('error', (msg) => setFormError(msg.message));
     gameSocket.send('listRooms', { churchId });
     const interval = setInterval(() => gameSocket.send('listRooms', { churchId }), 3000);
     return () => {
       offList();
       offCreated();
+      offError();
       clearInterval(interval);
     };
   }, [churchId, navigate]);
 
   function createRoom() {
     if (!title.trim()) return;
-    gameSocket.send('createRoom', { churchId, title: title.trim(), map, capacity, level, questionCount });
+    if (pin && !/^\d{4}$/.test(pin)) {
+      setFormError('방 PIN은 숫자 4자리로 정해 주세요. 비워 두면 자동으로 만들어요.');
+      return;
+    }
+    if (hostPassword && !/^[0-9A-Za-z]{4,12}$/.test(hostPassword)) {
+      setFormError('진행자 비밀번호는 영문·숫자 4~12자로 정해 주세요. 비워 두면 자동으로 만들어요.');
+      return;
+    }
+    if (hostPassword && hostPassword === pin) {
+      setFormError('진행자 비밀번호는 방 입장 PIN과 다르게 정해 주세요.');
+      return;
+    }
+    setFormError(null);
+    gameSocket.send('createRoom', {
+      pin: pin || undefined,
+      hostPassword: hostPassword || undefined,
+      churchId,
+      title: title.trim(),
+      map,
+      capacity,
+      level,
+      questionCount,
+      teamMode,
+      ...(useGroup && session ? { groupCode: session.code, groupPin: session.pin } : {}),
+    });
   }
 
   return (
@@ -107,6 +143,39 @@ export function HostRooms() {
                 {n}문제
               </button>
             ))}
+          </div>
+          <p className="picker-label">방 PIN (학생 입장용 숫자 4자리)</p>
+          <input
+            className="input"
+            inputMode="numeric"
+            placeholder="비워 두면 자동으로 만들어요"
+            maxLength={4}
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+          />
+          <p className="picker-label">진행자 비밀번호 (선생님만, 영문·숫자 4~12자)</p>
+          <input
+            className="input"
+            placeholder="비워 두면 자동으로 만들어요"
+            maxLength={12}
+            autoComplete="off"
+            value={hostPassword}
+            onChange={(e) => setHostPassword(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
+          />
+          <p className="fine-print">방 PIN은 학생 입장용, 진행자 비밀번호는 진행자 화면을 다시 열 때 써요. 학생에게 알려 주지 마세요.</p>
+          {formError && <p className="form-error">{formError}</p>}
+          <p className="picker-label">더 재미있게</p>
+          <div className="row">
+            <button type="button" className={`btn btn-sm ${teamMode ? 'btn-primary' : ''}`} onClick={() => setTeamMode((v) => !v)}>
+              팀 대결 {teamMode ? '켜짐' : '꺼짐'}
+            </button>
+            {session ? (
+              <button type="button" className={`btn btn-sm ${useGroup ? 'btn-primary' : ''}`} onClick={() => setUseGroup((v) => !v)}>
+                {session.code} 반 출석·달란트 {useGroup ? '기록' : '안 함'}
+              </button>
+            ) : (
+              <span className="fine-print">출석·달란트 기록은 호스트 홈에서 반을 먼저 열어 주세요.</span>
+            )}
           </div>
           <button className="btn btn-primary" onClick={createRoom} disabled={!title.trim()}>
             방 만들기

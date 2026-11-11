@@ -8,6 +8,7 @@ import { AvatarIcon } from '../components/AvatarIcon';
 import { isWebGLAvailable } from '../three/webgl';
 import type { RoomSnapshot } from '../protocol';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
+import { ShopPanel } from '../components/ShopPanel';
 
 const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
@@ -144,17 +145,22 @@ export function PlayerRoom() {
   const [room, setRoom] = useState<RoomSnapshot | null>(null);
   const [joined, setJoined] = useState(false);
   const [nickname, setNickname] = useState('');
+  const [pin, setPin] = useState('');
+  const [shopOpen, setShopOpen] = useState(false);
   const [avatarConfig, setAvatarConfig] = useState<AvatarConfig>(DEFAULT_AVATAR_CONFIG);
   const avatar = useMemo(() => encodeAvatar(avatarConfig), [avatarConfig]);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [attendance, setAttendance] = useState<{ streak: number; streakBonus: number } | null>(null);
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
   useEffect(() => {
     gameSocket.connect();
     const offJoined = gameSocket.on('joined', (msg) => {
       setJoined(true);
+      setError(null);
       setRoom(msg.room);
+      if (msg.attendance) setAttendance(msg.attendance);
     });
     const offState = gameSocket.on('roomState', (msg) => {
       if (msg.room.id === roomId) setRoom(msg.room);
@@ -175,7 +181,12 @@ export function PlayerRoom() {
 
   function join() {
     if (!nickname.trim()) return;
-    gameSocket.send('joinRoom', { roomId, deviceId, nickname: nickname.trim(), avatar });
+    if (!/^\d{4}$/.test(pin)) {
+      setError('선생님이 알려 준 방 PIN 숫자 4자리를 입력해 주세요.');
+      return;
+    }
+    setError(null);
+    gameSocket.send('joinRoom', { roomId, deviceId, nickname: nickname.trim(), avatar, pin });
   }
 
   function answer(choice: 'O' | 'X') {
@@ -188,7 +199,21 @@ export function PlayerRoom() {
         <div className="screen-narrow stack">
           <h1 className="title">닉네임과 아바타를 골라주세요</h1>
           <p className="subtitle">실명이나 전화번호는 필요 없어요</p>
-          {error && <p className="subtitle result-wrong">{error}</p>}
+          <div className="pin-entry card">
+            <p className="picker-label">방 PIN (숫자 4자리)</p>
+            <input
+              className="input pin-input"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="0000"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            />
+            <p className="fine-print">선생님 화면에 크게 나와 있어요.</p>
+          </div>
+
+          {error && <p className="form-error join-error">{error}</p>}
 
           <input
             className="input"
@@ -255,7 +280,7 @@ export function PlayerRoom() {
             </div>
           </div>
 
-          <button className="btn btn-primary" onClick={join} disabled={!nickname.trim()}>
+          <button className="btn btn-primary" onClick={join} disabled={!nickname.trim() || pin.length !== 4}>
             입장하기
           </button>
         </div>
@@ -271,10 +296,37 @@ export function PlayerRoom() {
       <div className="screen-narrow stack">
         <h1 className="title">{room.title}</h1>
 
+        {(() => {
+          const myTeam = room.team?.enabled ? room.team.teams.find((t) => t.id === me?.teamId) : undefined;
+          if (!myTeam && !attendance) return null;
+          return (
+            <div className="player-chips">
+              {myTeam && (
+                <span className="team-chip" style={{ background: myTeam.color }}>
+                  우리 팀: {myTeam.name}
+                  {room.status !== 'lobby' && ` · 평균 ${myTeam.average}`}
+                </span>
+              )}
+              {attendance && (
+                <span className="team-chip attend-chip">
+                  출석 완료{attendance.streak >= 2 ? ` · ${attendance.streak}주 연속!` : ''}
+                  {attendance.streakBonus > 0 ? ` +${attendance.streakBonus} 달란트` : ''}
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {room.status === 'lobby' && (
-          <div className="card">
+          <div className="card stack">
             <p className="subtitle">선생님이 퀴즈를 시작하면 바로 알려드려요. 잠시만 기다려주세요!</p>
             <p>참여 인원: {room.players.length}명</p>
+            {me && (
+              <div className="my-character">
+                <AvatarIcon avatarId={me.avatar} cosmetics={me.cosmetics} size={72} />
+                <span>{me.nickname}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -338,6 +390,42 @@ export function PlayerRoom() {
           <div className="card stack">
             <h2 className="title">퀴즈 종료!</h2>
             <p>내 최종 점수: {me?.score ?? 0}점</p>
+            {room.finalResult?.team &&
+              me?.teamId &&
+              (() => {
+                const fr = room.finalResult!.team!;
+                const mine = fr.teams.find((t) => t.id === me.teamId);
+                if (!mine) return null;
+                const won = fr.winnerTeamIds.includes(mine.id);
+                return (
+                  <p className="player-team-result" style={{ borderColor: mine.color }}>
+                    <span className="team-dot" style={{ background: mine.color }} />
+                    {mine.name} {won ? (fr.tie ? '무승부!' : '승리!') : '아쉽지만 잘했어요!'}
+                  </p>
+                );
+              })()}
+            {(() => {
+              const award = room.finalResult?.awards.find((a) => a.id === me?.id);
+              if (!award) return null;
+              return (
+                <p className="player-award">
+                  달란트 +{award.delta}{' '}
+                  <small>
+                    (
+                    {award.parts
+                      .filter((x) => x.delta > 0)
+                      .map((x) => `${x.reason} +${x.delta}`)
+                      .join(', ') || '지급 없음'}
+                    )
+                  </small>
+                  {award.capped && (
+                    <span className="cap-note">
+                      이번 주 상한({award.weeklyCap}개)이라 {award.requested}개 중 {award.delta}개만 받았어요.
+                    </span>
+                  )}
+                </p>
+              );
+            })()}
             <div className="stack">
               {[...room.players]
                 .sort((a, b) => b.score - a.score)
@@ -353,10 +441,17 @@ export function PlayerRoom() {
           </div>
         )}
 
+        {me?.recorded && (room.status === 'lobby' || room.status === 'finished') && (
+          <button className="btn shop-open-btn" onClick={() => setShopOpen(true)}>
+            <span className="talent-coin" aria-hidden /> 달란트 상점 열기
+          </button>
+        )}
+
         <button className="link-btn" onClick={() => navigate('/')}>
           나가기
         </button>
       </div>
+      {shopOpen && me && roomId && <ShopPanel roomId={roomId} avatarId={me.avatar} onClose={() => setShopOpen(false)} />}
     </div>
   );
 }

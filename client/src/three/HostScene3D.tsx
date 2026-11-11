@@ -62,19 +62,25 @@ export function HostScene3D({ players, status, correctAnswer, positions, zones =
       <LetterStructure shape="O" origin={[zoneCenterX(zones.O), 0, -1.2]} reveal={revealing ? (correctAnswer === 'O' ? 'correct' : 'wrong') : 'idle'} />
       <LetterStructure shape="X" origin={[zoneCenterX(zones.X), 0, -1.2]} reveal={revealing ? (correctAnswer === 'X' ? 'correct' : 'wrong') : 'idle'} />
 
-      {players.map((p) => {
+      {players.map((p, index) => {
         const pos = positions[p.id];
         // Players spawn near the back of the map (see server randomSpawn) so
         // the fallback before the first `positions` broadcast arrives looks
         // sane rather than snapping everyone to the origin.
-        const x = pos?.x ?? 0;
-        const z = pos?.z ?? 8;
+        // 대기실에서는 위치 방송이 없으므로 한 점에 겹치지 않게 옆으로 나란히 세운다.
+        const lineupStep = Math.min(1.6, 14 / Math.max(1, players.length));
+        const x = pos?.x ?? (index - (players.length - 1) / 2) * lineupStep;
+        // 대기실에서는 지도 끝(z=8)이 아니라 가운데쯤에 세워서 다리가 화면 아래로 잘리지 않게 한다.
+        const z = pos?.z ?? (status === 'lobby' ? 4.6 : 8);
         const y = pos?.y ?? 0;
         const reveal: RevealState = revealing ? (p.side === correctAnswer ? 'correct' : 'wrong') : 'idle';
         return (
           <VoxelCharacter
             key={p.id}
             avatarId={p.avatar}
+            cosmetics={p.cosmetics}
+            labelSmall={status === 'lobby' && players.length > 5}
+            labelLift={status === 'lobby' ? (index % 3) * 0.55 : 0}
             nickname={p.nickname}
             target={[x, y, z]}
             moveState={pos?.state}

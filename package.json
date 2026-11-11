@@ -15,7 +15,8 @@
     "verify": "node verify/verify.mjs",
     "start": "node server/src/index.js",
     "verify:remote": "node verify/verify.mjs",
-    "gen-gemini": "node scripts/gen-questions-gemini.mjs"
+    "gen-gemini": "node scripts/gen-questions-gemini.mjs",
+    "verify:supabase": "node scripts/verify-supabase-records.mjs"
   },
   "devDependencies": {
     "ws": "^8.18.0"
