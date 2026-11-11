@@ -639,6 +639,7 @@ async function main() {
   verifyRecordsUnit();
   verifyRulesUnit();
   verifyGaitUnit();
+  verifyPauseUnit();
   log(`starting server on port ${PORT}...`);
   const server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(ROOT, 'server'),
@@ -1555,6 +1556,7 @@ async function main() {
 
     await verifyGuideFindings();
     await verifyGaitRules();
+    await verifyDisplayRemote();
 
     pinTester.close();
     dup.close();
@@ -1723,6 +1725,295 @@ async function verifyGuideFindings() {
   for (const k of kids) k.client.close();
   gh.close();
   log('question-count cap per level, 4v4 totals (18 vs 20) + averages, frozen result, zone spread ok');
+}
+
+// ---------------------------------------------------------------------------
+// 11. 송출 화면(display) · 입장 QR 주소 · 휴대폰 리모컨(remote) · 멈춤 · 내보내기
+// ---------------------------------------------------------------------------
+
+// 멈춤 계산은 시각을 직접 넣어 확인한다 (타이밍에 흔들리지 않는다).
+function verifyPauseUnit() {
+  const church = gameState.findOrCreateChurch(`멈춤단위-${Date.now()}`);
+  const room = gameState.createRoom({ churchId: church.id, title: '멈춤', questionSeconds: 10, pin: '1357', hostPassword: 'PauseUnit1' });
+  let timeouts = 0;
+  gameState.startQuiz(room, 3);
+  gameState.advanceQuestion(room, () => { timeouts += 1; });
+  const t0 = room.deadline - 10000;
+  assert(gameState.resumeQuestion(room, t0 + 1000) === false, '멈추지 않은 문제는 다시 시작할 것이 없음');
+  assert(gameState.pauseQuestion(room, t0 + 4000) === true && room.paused && room.deadline === null && room.timer === null, '멈추면 타이머가 꺼짐');
+  assert(room.remainingMs === 6000, `4초 지난 뒤 멈추면 6초 남음: ${room.remainingMs}`);
+  assert(gameState.pauseQuestion(room, t0 + 9000) === false && room.remainingMs === 6000, '이미 멈춘 문제를 또 멈춰도 남은 시간은 그대로');
+  const snap = gameState.serializeRoom(room);
+  assert(snap.question.paused === true && snap.question.remainingMs === 6000 && snap.question.deadline === null, '학생 스냅샷에도 멈춤 상태와 남은 시간이 담김');
+  assert(gameState.resumeQuestion(room, t0 + 60000) === true && !room.paused && room.deadline === t0 + 66000, '다시 시작하면 남은 6초만 더 셈 (멈춘 시간은 빼지 않음)');
+  assert(gameState.serializeRoom(room).question.paused === false, '다시 시작하면 멈춤 표시가 꺼짐');
+  // 멈춘 채로 정답 공개 → 멈춤이 풀리고 타이머도 남지 않는다
+  gameState.pauseQuestion(room, t0 + 61000);
+  gameState.revealAnswer(room);
+  assert(room.status === 'reveal' && !room.paused && room.timer === null && room.remainingMs === null, '멈춘 채 공개해도 깨끗하게 공개 상태가 됨');
+  // 다음 문제는 멈춤 없이 새 시간으로 시작
+  gameState.advanceQuestion(room, () => { timeouts += 1; });
+  assert(room.status === 'question' && !room.paused && room.deadline !== null, '다음 문제는 멈춤 없이 시작');
+  // 일찍 끝내기: 공개하지 않은 지금 문제는 치지 않는다 (공개한 1문제만 남음)
+  assert(gameState.endQuiz(room) === true && room.status === 'finished' && room.questions.length === 1 && room.timer === null, '일찍 끝내면 공개한 문제까지만 침');
+  assert(gameState.endQuiz(room) === false, '이미 끝난 게임은 다시 끝내지 않음');
+  assert(timeouts === 0, '멈춤·끝내기 뒤에 남은 타이머가 없어야 함');
+
+  // 스냅샷 보기 권한: 학생 < 송출 화면 < 진행자 < 리모컨
+  const r2 = gameState.createRoom({ churchId: church.id, title: '권한', pin: '2460', hostPassword: 'ViewUnit22' });
+  gameState.startQuiz(r2, 2);
+  gameState.advanceQuestion(r2, () => {});
+  const views = Object.fromEntries(['player', 'display', 'host', 'remote'].map((v) => [v, gameState.serializeRoom(r2, { view: v })]));
+  assert(!JSON.stringify(views.player).includes('ViewUnit22') && views.player.pin === undefined && views.player.joinPath === undefined, '학생 스냅샷: 방 PIN·진행자 비밀번호·입장 주소 없음');
+  assert(!JSON.stringify(views.display).includes('ViewUnit22') && views.display.hostPassword === undefined && views.display.controlKey === undefined, '송출 화면 스냅샷: 진행자 비밀번호·재접속 키 없음');
+  assert(views.display.pin === '2460' && views.display.joinPath === `/j/${r2.joinCode}?p=2460`, '송출 화면 스냅샷: 방 PIN 과 입장 주소는 있음');
+  assert(views.host.hostPassword === 'ViewUnit22' && views.host.question.answer === undefined, '진행자 화면 스냅샷: 비밀번호는 있고 정답은 없음(큰 화면에 띄워도 안전)');
+  assert(['O', 'X'].includes(views.remote.question.answer) && views.remote.question.answer === r2.questions[0].answer, '리모컨 스냅샷에만 지금 문제의 정답이 담김');
+  for (const v of ['player', 'display', 'host']) assert(!('answer' in views[v].question), `${v} 스냅샷에는 정답이 없어야 함`);
+  assert(gameState.serializeRoom(r2, { forHost: true }).hostPassword === 'ViewUnit22', '예전 forHost 옵션도 그대로 동작');
+  gameState.endQuiz(r2);
+  // 음악 값 다듬기
+  assert(JSON.stringify(gameState.normalizeMusic({ track: 'nope', volume: 7, enabled: 'yes' })) === JSON.stringify({ track: 'upbeat', enabled: true, volume: 1 }), '음악: 모르는 곡은 무시, 소리 크기는 0~1');
+  assert(gameState.normalizeMusic({ track: 'march', enabled: false, volume: 0.55 }).track === 'march', '음악: 아는 곡은 반영');
+  log('pause/resume math, early end, snapshot views (player < display < host < remote), music normalize ok');
+}
+
+async function verifyDisplayRemote() {
+  log('--- display / join QR url / phone remote / pause / kick ---');
+  const HOST_PW = 'Remote77'; // 연습용
+  const ROOM_PIN = '2468'; // 연습용
+  const host = new Client('dr-host');
+  const display = new Client('dr-display');
+  const remote = new Client('dr-remote');
+  const s1 = new Client('dr-student1');
+  const s2 = new Client('dr-student2');
+  await Promise.all([host, display, remote, s1, s2].map((c) => c.ready()));
+  const drain = (c, ...types) => { c.buffer = c.buffer.filter((m) => !types.includes(m.type)); };
+
+  host.send('findOrCreateChurch', { name: `검증교회-송출-${Date.now()}` });
+  const churchId = (await host.waitFor('churchJoined')).church.id;
+  host.send('createRoom', { churchId, title: '송출방', pin: ROOM_PIN, hostPassword: HOST_PW, questionSeconds: 3, questionCount: 3, music: { track: 'calm', volume: 0.4 } });
+  const created = await host.waitFor('roomCreated');
+  const roomId = created.room.id;
+  const hostKey = created.hostKey;
+
+  // ---- 입장 QR 주소: 짧은 입장 코드 + 방 PIN ----
+  const { joinCode, joinPath, joinPathNoPin } = created.room;
+  assert(/^[2-9A-HJKMNP-Z]{5}$/.test(joinCode), `입장 코드는 헷갈리지 않는 글자 5자: ${joinCode}`);
+  assert(joinPath === `/j/${joinCode}?p=${ROOM_PIN}`, `QR 주소 경로에 입장 코드와 방 PIN 이 들어감: ${joinPath}`);
+  assert(joinPathNoPin === `/j/${joinCode}`, `글자로 보여 주는 주소에는 방 PIN 이 없음: ${joinPathNoPin}`);
+  assert(!joinPath.includes(HOST_PW) && !joinPath.includes(hostKey), '입장 주소에 진행자 비밀번호·호스트 키가 들어가면 안 됨');
+  assert(created.room.music.track === 'calm' && created.room.music.volume === 0.4 && created.room.music.enabled === true, '방 만들 때 고른 음악이 방에 기억됨');
+  // 실제 QR 에 들어가는 전체 주소를 클라이언트와 같은 방식(사이트 주소 + # + 경로)으로 만들어 풀어 본다.
+  const qrUrl = new URL(`https://church-game.onrender.com/#${joinPath}`);
+  const [hashPath, hashQuery] = qrUrl.hash.slice(1).split('?');
+  const codeFromUrl = hashPath.split('/')[2];
+  const pinFromUrl = new URLSearchParams(hashQuery).get('p');
+  assert(hashPath.startsWith('/j/') && codeFromUrl === joinCode && pinFromUrl === ROOM_PIN, `QR 주소에서 입장 코드·방 PIN 을 읽을 수 있음: ${qrUrl.href}`);
+  s1.send('resolveJoinCode', { code: codeFromUrl.toLowerCase() });
+  const resolved = await s1.waitFor('joinCodeResolved');
+  assert(resolved.roomId === roomId && resolved.title === '송출방', '입장 코드(소문자로 쳐도)가 그 방으로 이어짐');
+  s1.send('resolveJoinCode', { code: 'ZZZZZ9' });
+  assert((await s1.waitFor('joinCodeResolved', (m) => m.code === 'ZZZZZ9')).roomId === null, '없는 입장 코드는 방이 없다고 답함');
+  // QR 로 들어온 학생: 주소에 있던 방 PIN 으로 바로 입장
+  s1.send('joinRoom', { roomId: resolved.roomId, deviceId: 'dr-s1', nickname: '큐알하나', avatar: 'circle-blue', pin: pinFromUrl });
+  const s1Joined = await s1.waitFor('joined');
+  assert(s1Joined.room.pin === undefined && s1Joined.room.joinPath === undefined && s1Joined.room.music === undefined, '학생이 받는 방 상태에는 방 PIN·입장 주소·음악이 없음');
+  s2.send('joinRoom', { roomId, deviceId: 'dr-s2', nickname: '큐알둘', avatar: 'circle-blue', pin: ROOM_PIN });
+  await s2.waitFor('joined');
+
+  // ---- 송출 화면: 키 없이는 못 붙고, 연결 코드로만 붙는다 ----
+  display.send('displayOpen', { roomId });
+  await display.waitFor('displayAuthRequired', (m) => m.roomId === roomId);
+  display.send('displayOpen', { roomId, displayKey: 'guess', hostPassword: HOST_PW });
+  await display.waitFor('displayAuthRequired', (m) => m.roomId === roomId);
+  assert(!display.buffer.some((m) => m.type === 'roomState'), '확인 안 된 송출 화면에는 방 상태가 가지 않음 (진행자 비밀번호를 보내도 송출 화면은 열리지 않음)');
+  display.send('displayPairRequest');
+  const pairCode = (await display.waitFor('displayPairCode')).code;
+  assert(/^\d{6}$/.test(pairCode), `연결 코드는 숫자 6자리: ${pairCode}`);
+  await expectError(s1, 'pairDisplay', { roomId, code: pairCode }, /호스트만/, '학생은 송출 화면을 연결할 수 없음');
+
+  // ---- 리모컨: 진행자 비밀번호로 들어온다 ----
+  remote.send('hostOpenRoom', { roomId, as: 'remote' });
+  await remote.waitFor('hostAuthRequired', (m) => m.roomId === roomId);
+  remote.send('hostOpenRoom', { roomId, as: 'remote', hostPassword: HOST_PW });
+  const remoteOpened = await remote.waitFor('roomState', (m) => m.room.id === roomId);
+  assert(remoteOpened.room.hostPassword === HOST_PW && remoteOpened.room.pin === ROOM_PIN && typeof remoteOpened.room.controlKey === 'string', '리모컨은 진행자 비밀번호로 열리고 재접속 키를 받음');
+  const controlKey = remoteOpened.room.controlKey;
+  await host.waitFor('roomState', (m) => m.room.id === roomId && m.room.remoteCount === 1);
+
+  await expectError(remote, 'pairDisplay', { roomId, code: pairCode === '000000' ? '000001' : '000000' }, /연결 코드/, '틀린 연결 코드');
+  drain(display, 'roomState');
+  remote.send('pairDisplay', { roomId, code: pairCode });
+  const paired = await display.waitFor('displayPaired', (m) => m.roomId === roomId);
+  await remote.waitFor('displayLinked', (m) => m.roomId === roomId);
+  const displayState = await display.waitFor('roomState', (m) => m.room.id === roomId);
+  assert(displayState.room.pin === ROOM_PIN && displayState.room.joinPath === joinPath && displayState.room.players.length === 2, '송출 화면이 방 상태(방 PIN·입장 주소·참가자)를 받음');
+  assert(!('hostPassword' in displayState.room) && !('controlKey' in displayState.room), '송출 화면이 받는 방 상태에 진행자 비밀번호·재접속 키가 없음');
+  await remote.waitFor('roomState', (m) => m.room.id === roomId && m.room.displayCount === 1);
+  await host.waitFor('roomState', (m) => m.room.id === roomId && m.room.displayCount === 1 && m.room.remoteCount === 1);
+  await expectError(remote, 'pairDisplay', { roomId, code: pairCode }, /연결 코드/, '한 번 쓴 연결 코드는 다시 못 씀');
+
+  // 송출 화면은 진행 명령을 하나도 못 쓴다
+  for (const [type, payload] of [
+    ['startQuiz', {}],
+    ['setHostPassword', { hostPassword: 'Stolen123' }],
+    ['kickPlayer', { playerId: 'dr-s1' }],
+    ['pause', { paused: true }],
+    ['setMusic', { track: 'march' }],
+    ['endQuiz', {}],
+    ['setDisplayOptions', { showQr: false }],
+    ['pairDisplay', { code: '123456' }],
+  ]) {
+    await expectError(display, type, { roomId, ...payload }, /호스트만/, `송출 화면의 ${type}`);
+  }
+
+  // ---- 음악·QR 표시는 리모컨이 정하고 송출 화면이 받는다 ----
+  remote.send('setMusic', { roomId, track: 'march', volume: 0.55 });
+  const musicOnDisplay = await display.waitFor('roomState', (m) => m.room.music?.track === 'march');
+  assert(musicOnDisplay.room.music.volume === 0.55 && musicOnDisplay.room.music.enabled === true, '리모컨이 고른 곡·소리 크기가 송출 화면에 전달됨');
+  await host.waitFor('roomState', (m) => m.room.music?.track === 'march' && m.room.music.volume === 0.55);
+  remote.send('setMusic', { roomId, enabled: false });
+  assert((await display.waitFor('roomState', (m) => m.room.music?.enabled === false)).room.music.track === 'march', '음악 끄기도 전달됨 (곡은 그대로)');
+  remote.send('setDisplayOptions', { roomId, showQr: false });
+  await display.waitFor('roomState', (m) => m.room.showQr === false);
+  remote.send('setDisplayOptions', { roomId, showQr: true });
+  await display.waitFor('roomState', (m) => m.room.showQr === true);
+
+  // ---- 리모컨으로 시작 · 멈춤 · 다시 시작 · 공개 · 다음 문제 ----
+  for (const c of [host, display, remote, s1, s2]) drain(c, 'roomState');
+  remote.send('startQuiz', { roomId });
+  const rq0 = await remote.waitFor('roomState', (m) => m.room.status === 'question' && m.room.question.index === 0);
+  assert(rq0.room.question.answer === answerFor(rq0.room.question.text), '리모컨은 지금 문제의 정답을 봄');
+  const dq0 = await display.waitFor('roomState', (m) => m.room.status === 'question' && m.room.question.index === 0);
+  const hq0 = await host.waitFor('roomState', (m) => m.room.status === 'question' && m.room.question.index === 0);
+  const sq0 = await s1.waitFor('roomState', (m) => m.room.status === 'question' && m.room.question.index === 0);
+  for (const [who, snap] of [['송출 화면', dq0], ['진행자 화면', hq0], ['학생', sq0]]) {
+    assert(!('answer' in snap.room.question) && !('explanation' in snap.room.question), `${who}에는 공개 전 정답·해설이 가지 않음`);
+  }
+  assert(dq0.room.question.text === rq0.room.question.text && sq0.room.question.text === rq0.room.question.text, '모든 화면이 같은 문제를 봄');
+  // 송출 화면도 캐릭터 위치를 받는다 (리모컨은 받지 않는다)
+  await display.waitFor('positions', (m) => m.roomId === roomId);
+  const status = await remote.waitFor('remoteStatus', (m) => m.roomId === roomId);
+  assert(status.zoneCounts.O + status.zoneCounts.X + status.zoneCounts.none === 2, `리모컨 응답 현황은 참가자 수와 맞음: ${JSON.stringify(status.zoneCounts)}`);
+  assert(!remote.buffer.some((m) => m.type === 'positions'), '리모컨에는 위치 정보를 보내지 않음');
+
+  await expectError(s1, 'pause', { roomId, paused: true }, /호스트만/, '학생은 멈출 수 없음');
+  remote.send('pause', { roomId, paused: true });
+  const pausedSnap = await display.waitFor('roomState', (m) => m.room.question?.paused === true);
+  assert(pausedSnap.room.status === 'question' && pausedSnap.room.question.deadline === null, '멈추면 마감 시각이 없어짐');
+  assert(pausedSnap.room.question.remainingMs > 0 && pausedSnap.room.question.remainingMs <= 3000, `남은 시간이 담김: ${pausedSnap.room.question.remainingMs}`);
+  await s1.waitFor('roomState', (m) => m.room.question?.paused === true);
+  await host.waitFor('roomState', (m) => m.room.question?.paused === true);
+  await remote.waitFor('roomState', (m) => m.room.question?.paused === true);
+  // 문제 시간(3초)보다 오래 기다려도 멈춘 동안에는 정답이 공개되지 않는다
+  await sleep(3600);
+  assert(![display, s1, host, remote].some((c) => c.buffer.some((m) => m.type === 'roomState' && m.room.status === 'reveal')), '멈춘 동안에는 시간이 흘러도 정답이 공개되지 않음');
+  const resumeAt = Date.now();
+  host.send('pause', { roomId, paused: false }); // 진행자 화면과 리모컨 둘 다 진행할 수 있다
+  const resumed = await display.waitFor('roomState', (m) => m.room.status === 'question' && m.room.question.paused === false && m.room.question.deadline !== null);
+  const leftAfterResume = resumed.room.question.deadline - resumeAt;
+  assert(Math.abs(leftAfterResume - pausedSnap.room.question.remainingMs) < 1000, `다시 시작하면 멈출 때 남은 시간부터 이어짐: 멈출 때 ${pausedSnap.room.question.remainingMs}ms, 다시 시작 후 ${leftAfterResume}ms`);
+  // 남은 시간이 지나면 저절로 공개된다
+  const autoReveal = await display.waitFor('roomState', (m) => m.room.status === 'reveal' && m.room.question.index === 0, 8000);
+  assert(Date.now() - resumeAt >= pausedSnap.room.question.remainingMs - 300, '남은 시간을 다 쓴 뒤에 공개됨');
+  assert(autoReveal.room.lastResult.correctAnswer === rq0.room.question.answer, '공개된 정답은 리모컨이 미리 본 정답과 같음');
+
+  remote.send('nextQuestion', { roomId });
+  const rq1 = await remote.waitFor('roomState', (m) => m.room.status === 'question' && m.room.question.index === 1);
+  assert(rq1.room.question.paused === false && rq1.room.question.deadline !== null, '다음 문제는 멈춤 없이 시작');
+  remote.send('reveal', { roomId });
+  const rev1 = await display.waitFor('roomState', (m) => m.room.status === 'reveal' && m.room.question.index === 1);
+  assert(rev1.room.lastResult.correctAnswer === rq1.room.question.answer, '리모컨의 「정답 공개」가 송출 화면에 반영됨');
+  await s1.waitFor('roomState', (m) => m.room.status === 'reveal' && m.room.question.index === 1);
+
+  // ---- 내보내기 ----
+  await expectError(s1, 'kickPlayer', { roomId, playerId: 'dr-s2' }, /호스트만/, '학생은 내보낼 수 없음');
+  drain(remote, 'roomState');
+  remote.send('kickPlayer', { roomId, playerId: 'dr-s2' });
+  await s2.waitFor('kicked', (m) => m.roomId === roomId);
+  const afterKick = await remote.waitFor('roomState', (m) => m.room.players.length === 1);
+  assert(afterKick.room.players[0].id === 'dr-s1' && afterKick.room.kickedCount === 1, '내보낸 친구는 참가자 목록에서 빠짐');
+  await display.waitFor('roomState', (m) => m.room.players.length === 1);
+  await expectError(s2, 'joinRoom', { roomId, deviceId: 'dr-s2', nickname: '큐알둘', avatar: 'circle-blue', pin: ROOM_PIN }, /내보냈/, '내보낸 기기는 방 PIN 을 알아도 다시 못 들어옴');
+  await expectError(remote, 'kickPlayer', { roomId, playerId: 'dr-s2' }, /찾을 수 없/, '없는 참가자 내보내기');
+  remote.send('clearKicks', { roomId });
+  await remote.waitFor('roomState', (m) => m.room.kickedCount === 0);
+  s2.send('joinRoom', { roomId, deviceId: 'dr-s2', nickname: '큐알둘', avatar: 'circle-blue', pin: ROOM_PIN });
+  await s2.waitFor('joined');
+
+  // ---- 일찍 끝내고 결과로 ----
+  remote.send('endQuiz', { roomId });
+  const fin = await display.waitFor('roomState', (m) => m.room.status === 'finished');
+  assert(fin.room.finalResult && fin.room.finalResult.totalQuestions === 2, `3문제 중 공개한 2문제까지만 결과에 침: ${JSON.stringify(fin.room.finalResult)}`);
+  await s1.waitFor('roomState', (m) => m.room.status === 'finished');
+
+  // ---- 재접속: 송출 화면은 송출 키, 리모컨은 재접속 키 ----
+  const everythingDisplaySaw = JSON.stringify(display.buffer) + JSON.stringify([displayState, dq0, pausedSnap, resumed, autoReveal, rev1, fin, paired]);
+  assert(!everythingDisplaySaw.includes(HOST_PW) && !everythingDisplaySaw.includes(controlKey) && !everythingDisplaySaw.includes(hostKey), '송출 화면이 받은 어떤 메시지에도 진행자 비밀번호·진행 키가 없음');
+  display.close();
+  await remote.waitFor('roomState', (m) => m.room.displayCount === 0);
+  const display2 = new Client('dr-display2');
+  const remote2 = new Client('dr-remote2');
+  await Promise.all([display2.ready(), remote2.ready()]);
+  display2.send('displayOpen', { roomId, displayKey: paired.displayKey });
+  await display2.waitFor('displayReady', (m) => m.roomId === roomId);
+  const d2 = await display2.waitFor('roomState', (m) => m.room.id === roomId);
+  assert(d2.room.status === 'finished' && d2.room.pin === ROOM_PIN && !('hostPassword' in d2.room), '송출 화면을 새로 열어도 송출 키로 상태가 돌아옴 (비밀번호 없이)');
+  remote2.send('hostOpenRoom', { roomId, as: 'remote', controlKey });
+  const r2 = await remote2.waitFor('roomState', (m) => m.room.id === roomId);
+  assert(r2.room.status === 'finished' && r2.room.hostPassword === HOST_PW && r2.room.displayCount === 1, '리모컨을 새로 열어도 재접속 키로 상태가 돌아옴');
+  // 진행자 화면이었던 접속이 송출 화면으로 바뀌면 그때부터 진행 권한이 없다
+  const hostTurnedDisplay = new Client('dr-host-as-display');
+  await hostTurnedDisplay.ready();
+  hostTurnedDisplay.send('hostOpenRoom', { roomId, hostKey });
+  await hostTurnedDisplay.waitFor('roomState', (m) => m.room.id === roomId && m.room.hostPassword === HOST_PW);
+  drain(hostTurnedDisplay, 'roomState');
+  hostTurnedDisplay.send('displayOpen', { roomId });
+  await hostTurnedDisplay.waitFor('displayReady', (m) => m.roomId === roomId);
+  const turned = await hostTurnedDisplay.waitFor('roomState', (m) => m.room.id === roomId);
+  assert(!('hostPassword' in turned.room), '송출 화면으로 바꾼 뒤에는 진행자 비밀번호를 받지 않음');
+  await expectError(hostTurnedDisplay, 'startQuiz', { roomId }, /호스트만/, '송출 화면으로 바꾼 접속의 시작');
+  await sleep(150);
+  assert(!hostTurnedDisplay.buffer.some((m) => m.type === 'roomState' && 'hostPassword' in m.room), '송출 화면으로 바꾼 뒤 오는 방 상태에도 비밀번호가 없음');
+
+  // ---- 잠금은 틀린 그 접속에만 ----
+  const locked = new Client('dr-locked');
+  await locked.ready();
+  const tryRemote = async (client, hostPassword) => {
+    drain(client, 'error', 'roomState');
+    client.send('hostOpenRoom', { roomId, as: 'remote', hostPassword });
+    return (await client.waitFor('error')).message;
+  };
+  for (let n = 1; n <= 4; n++) assert(/맞지 않아요/.test(await tryRemote(locked, `nope${n}000`)), `${n}번째 오답은 일반 안내`);
+  const lockMsg = await tryRemote(locked, 'nope5000');
+  assert(/여러 번 틀렸어요/.test(lockMsg) && /30초/.test(lockMsg), `5번째 오답에서 그 접속이 잠김: ${lockMsg}`);
+  assert((await tryRemote(locked, HOST_PW)) === lockMsg, '잠긴 접속은 맞는 비밀번호도 거절');
+  const fresh = new Client('dr-fresh');
+  await fresh.ready();
+  fresh.send('hostOpenRoom', { roomId, as: 'remote', hostPassword: HOST_PW });
+  const freshOpened = await fresh.waitFor('roomState', (m) => m.room.id === roomId);
+  assert(freshOpened.room.hostPassword === HOST_PW && !fresh.buffer.some((m) => m.type === 'error'), '한 접속이 잠겨 있어도 다른 접속(다른 휴대폰)은 바로 리모컨을 열 수 있음');
+  drain(fresh, 'roomState');
+  fresh.send('startQuiz', { roomId });
+  await fresh.waitFor('roomState', (m) => m.room.status === 'question');
+  fresh.send('endQuiz', { roomId });
+  await fresh.waitFor('roomState', (m) => m.room.status === 'finished');
+
+  // ---- 비밀번호를 바꾸면 예전 재접속 키는 더 못 쓴다 ----
+  fresh.send('setHostPassword', { roomId, hostPassword: 'Changed88' });
+  const changed = await fresh.waitFor('roomState', (m) => m.room.hostPassword === 'Changed88');
+  assert(changed.room.controlKey !== controlKey, '진행자 비밀번호를 바꾸면 재접속 키도 바뀜');
+  const stale = new Client('dr-stale');
+  await stale.ready();
+  stale.send('hostOpenRoom', { roomId, as: 'remote', controlKey });
+  await stale.waitFor('hostAuthRequired', (m) => m.roomId === roomId);
+  assert(!stale.buffer.some((m) => m.type === 'roomState'), '예전 재접속 키로는 방 상태를 받지 못함');
+  stale.send('displayOpen', { roomId, controlKey });
+  await stale.waitFor('displayAuthRequired', (m) => m.roomId === roomId);
+
+  for (const c of [host, remote, s1, s2, display2, remote2, hostTurnedDisplay, locked, fresh, stale]) c.close();
+  log('display attach without host password, pairing code, remote start/pause/reveal/next/kick/end, music relay, per-socket lock, reconnect keys ok');
 }
 
 function waitUntil(predicate, timeoutMs) {

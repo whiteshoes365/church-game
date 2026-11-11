@@ -171,6 +171,17 @@ export interface QuestionSnapshot {
   text: string | null;
   category: Category | null;
   deadline: number | null;
+  paused?: boolean; // 선생님이 문제 시간을 멈춤
+  remainingMs?: number | null; // 멈춘 동안 남아 있는 시간
+  answer?: 'O' | 'X'; // 리모컨에만 내려오는 정답 (공개 전)
+  explanation?: string | null; // 리모컨에만
+}
+
+/** 서버가 기억하는 배경 음악 선택 (소리는 송출 화면 또는 진행자 PC 에서만 난다). */
+export interface RoomMusic {
+  track: string;
+  enabled: boolean;
+  volume: number;
 }
 
 export interface LastResult {
@@ -223,6 +234,15 @@ export interface RoomSnapshot {
   id: string;
   pin?: string; // 호스트에게만 내려오는 방 PIN (학생 입장용)
   hostPassword?: string; // 호스트에게만 내려오는 진행자 비밀번호 (방 PIN 과 별개)
+  controlKey?: string; // 진행자·리모컨에게만: 재접속 키
+  joinCode?: string; // 진행자·리모컨·송출 화면에만: 짧은 입장 코드
+  joinPath?: string; // QR 에 넣는 입장 경로 (방 PIN 포함) — 전체 주소는 joinLink.ts
+  joinPathNoPin?: string; // 글자로 보여 주는 입장 경로 (방 PIN 없음)
+  music?: RoomMusic;
+  showQr?: boolean; // 송출 화면에 입장 QR 을 보여 줄지
+  displayCount?: number; // 붙어 있는 송출 화면 수
+  remoteCount?: number; // 붙어 있는 리모컨 수
+  kickedCount?: number; // 내보낸 기기 수
   churchId: string;
   title: string;
   map: MapTheme;
