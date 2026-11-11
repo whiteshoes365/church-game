@@ -1,11 +1,17 @@
 # church-game Supabase
 
-운영 기록(출석·달란트 장부·상점·닉네임 주인·교사 PIN 해시·주간 상한)은 무료 플랜 프로젝트 `worship-song-tuner`(`dilqbdgzzgrhstcytonl`)에 저장합니다.
+운영 기록은 무료 플랜 프로젝트(ref `dilqbdgzzgrhstcytonl`, 표시 이름은 대시보드에서 `church`로 바꿔 주세요)에 저장합니다.
+찬양 튜너 기존 테이블은 `public`에 그대로 두고, 교회학교 게임 기록만 스키마 `church_game`에 둡니다.
 
 적용된 마이그레이션:
-- `church_game_records` — `church_classes`와 하위 테이블, RLS(정책 없음), anon/authenticated 권한 없음
+- `church_game_records` — 처음 public.`church_*` 테이블 생성
 - `church_sync_search_path` — 트리거 함수 search_path 고정
+- `move_church_game_schema` — 테이블을 `church_game` 스키마로 옮기고 접두어를 제거 (`classes`, `members`, `attendance`, `talent_ledger`, `shop_items`, `games`)
+
+권한: RLS 켜짐, 정책 없음, 스키마/테이블 권한은 `service_role`과 `postgres`만.
+
+Data API로 쓰려면 대시보드 Settings → API → Exposed schemas에 `church_game`을 추가해야 합니다. 서버는 `Accept-Profile`/`Content-Profile: church_game` 헤더를 씁니다.
 
 서버는 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`가 있을 때만 Supabase를 쓰고, 없으면 로컬 JSON 파일로 동작합니다(`npm run verify`는 오프라인).
 
-실제 DB 검사: `node scripts/verify-supabase-records.mjs` (환경 변수 필요, 끝나면 테스트 행을 지웁니다).
+실제 DB 검사: `npm run verify:supabase` (환경 변수 필요, 끝나면 테스트 행을 지웁니다).

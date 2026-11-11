@@ -1,6 +1,8 @@
 // Supabase persistence for church records.
 // Used only when SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set.
 // The service role key stays in the environment; it is never written to logs or files.
+// Tables live in the church_game schema (PostgREST Accept-Profile / Content-Profile).
+// That schema must be listed under the project's Settings → API → Exposed schemas.
 import { spawnSync } from 'node:child_process';
 
 export function supabaseEnabled() {
@@ -24,6 +26,8 @@ function request({ method, path, body }) {
         apikey: key,
         Authorization: 'Bearer ' + key,
         'Content-Type': 'application/json',
+        'Accept-Profile': 'church_game',
+        'Content-Profile': 'church_game',
         Prefer: 'return=representation,resolution=merge-duplicates',
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -63,7 +67,7 @@ function request({ method, path, body }) {
 export function loadClass(code) {
   const rows = request({
     method: 'GET',
-    path: `church_classes?code=eq.${encodeURIComponent(code)}&select=data`,
+    path: `classes?code=eq.${encodeURIComponent(code)}&select=data`,
   });
   return Array.isArray(rows) && rows[0] ? rows[0].data : null;
 }
@@ -72,7 +76,7 @@ export function saveClass(group) {
   const weeklyCap = Number(group.settings?.weeklyCap);
   request({
     method: 'POST',
-    path: 'church_classes?on_conflict=code',
+    path: 'classes?on_conflict=code',
     body: [
       {
         code: group.code,
@@ -90,6 +94,6 @@ export function saveClass(group) {
 export function deleteClass(code) {
   request({
     method: 'DELETE',
-    path: `church_classes?code=eq.${encodeURIComponent(code)}`,
+    path: `classes?code=eq.${encodeURIComponent(code)}`,
   });
 }

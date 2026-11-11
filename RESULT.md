@@ -2,9 +2,10 @@
 
 ## Supabase 기록 저장 (2026-11-11)
 
-- 운영 기록은 무료 플랜 기존 프로젝트 `worship-song-tuner`(`dilqbdgzzgrhstcytonl`)에 저장합니다. 이미 활성 프로젝트가 2개라 새 프로젝트는 만들지 않았습니다.
+- 운영 기록은 무료 플랜 기존 프로젝트(ref `dilqbdgzzgrhstcytonl`)에 저장합니다. 표시 이름은 대시보드 Settings → General에서 `church`로 바꿔 주세요(커넥터에 이름 변경 도구 없음).
+- 찬양 튜너 테이블은 `public`에 그대로 두고, 게임 기록만 스키마 `church_game`에 둡니다: `classes`, `members`, `attendance`, `talent_ledger`, `shop_items`, `games`.
 - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`가 있으면 Supabase, 없으면 로컬 JSON(기존 `npm run verify` 경로).
-- 테이블: `church_classes`(원본 문서) + `church_members` / `church_attendance` / `church_talent_ledger` / `church_shop_items` / `church_games`. RLS 켜짐, 정책 없음, anon/authenticated 권한 없음.
+- RLS 켜짐, 정책 없음, anon/authenticated 권한 없음. Data API를 쓰려면 Settings → API → Exposed schemas에 `church_game`을 추가해야 합니다.
 - 실제 DB 검사: `npm run verify:supabase` (끝나면 테스트 행 삭제).
 
 
