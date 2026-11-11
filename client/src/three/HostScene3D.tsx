@@ -1,4 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
+import { CenterDivider } from './CenterDivider';
 import { Terrain } from './Terrain';
 import { LetterStructure, type RevealState } from './LetterStructure';
 import { Clouds } from './Clouds';
@@ -102,15 +104,38 @@ function CameraRig() {
   return null;
 }
 
+// 정답 공개 순간 머리 위로 떠오르는 점수 표시: 정답 = 초록 +N, 오답 = 빨강 빼기(−) 막대.
+// 넘어지는 캐릭터를 따라 눕지 않도록 캐릭터 안이 아니라 무대 좌표에 따로 띄운다.
+const POPUP_Z_RANGE: [number, number] = [16777290, 16777280]; // 이름표(기본 범위)보다 항상 위
+
+function ScorePopup({ position, correct, points, delayMs }: { position: [number, number, number]; correct: boolean; points: number; delayMs: number }) {
+  return (
+    <Html position={position} center distanceFactor={NAME_TAG_DISTANCE_FACTOR} occlude={false} zIndexRange={POPUP_Z_RANGE} style={{ pointerEvents: 'none' }}>
+      <div
+        className={`score-popup ${correct ? 'correct' : 'wrong'}`}
+        style={{ animationDelay: `${delayMs}ms` }}
+        role="img"
+        aria-label={correct ? `정답 +${points}` : '오답'}
+      >
+        {correct ? `+${points}` : <span className="score-popup-minus" />}
+      </div>
+    </Html>
+  );
+}
+
+/** 이번 문제에서 정답자가 얻는 점수 (지금 규칙은 문제당 1점). */
+const POINTS_PER_CORRECT = 1;
+
 interface Props {
   players: PlayerSnapshot[];
   status: RoomStatus;
   correctAnswer: 'O' | 'X' | null;
+  correctPlayerIds?: string[];
   positions: Record<string, PlayerPosition>;
   zones?: Zones;
 }
 
-export function HostScene3D({ players, status, correctAnswer, positions, zones = DEFAULT_ZONES }: Props) {
+export function HostScene3D({ players, status, correctAnswer, correctPlayerIds, positions, zones = DEFAULT_ZONES }: Props) {
   const revealing = status === 'reveal' && correctAnswer != null;
   const canvasHeight = useThree((state) => state.size.height);
   const lobby = status === 'lobby';
@@ -159,6 +184,7 @@ export function HostScene3D({ players, status, correctAnswer, positions, zones =
       />
 
       <Terrain />
+      <CenterDivider />
       <Clouds />
 
       <LetterStructure shape="O" origin={[zoneCenterX(zones.O), 0, -1.2]} reveal={revealing ? (correctAnswer === 'O' ? 'correct' : 'wrong') : 'idle'} />
@@ -167,10 +193,12 @@ export function HostScene3D({ players, status, correctAnswer, positions, zones =
       {players.map((p, index) => {
         const { x, y, z } = spots[index];
         const pos = positions[p.id];
-        const reveal: RevealState = revealing ? (p.side === correctAnswer ? 'correct' : 'wrong') : 'idle';
+        const isCorrect = correctPlayerIds ? correctPlayerIds.includes(p.id) : p.side === correctAnswer;
+        const reveal: RevealState = revealing ? (isCorrect ? 'correct' : 'wrong') : 'idle';
         return (
           <VoxelCharacter
             key={p.id}
+            gait={revealing ? undefined : pos?.gait}
             avatarId={p.avatar}
             cosmetics={p.cosmetics}
             labelSmall={smallLabels}
@@ -184,6 +212,22 @@ export function HostScene3D({ players, status, correctAnswer, positions, zones =
           />
         );
       })}
+
+      {revealing &&
+        players.map((p, index) => {
+          const { x, z } = spots[index];
+          const isCorrect = correctPlayerIds ? correctPlayerIds.includes(p.id) : p.side === correctAnswer;
+          const lift = (tiers.get(p.id) ?? 0) * LABEL_TIER;
+          return (
+            <ScorePopup
+              key={`popup-${p.id}`}
+              position={[x, CHARACTER_SCALE * (nameTagHeight(!!p.cosmetics?.hat, lift) + 0.75), z]}
+              correct={isCorrect}
+              points={POINTS_PER_CORRECT}
+              delayMs={(index % 4) * 90}
+            />
+          );
+        })}
     </>
   );
 }

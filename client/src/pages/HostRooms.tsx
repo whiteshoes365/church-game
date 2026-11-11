@@ -5,6 +5,8 @@ import type { Capacity, Level, MapTheme, RoomSummary } from '../protocol';
 import { loadGroupSession } from '../groupSession';
 import { saveHostKey } from '../hostKeys';
 import { DEFAULT_LEVEL, LEVEL_CLASS, LEVEL_LABELS, LEVEL_OPTIONS } from '../levels';
+import { MusicPicker } from '../components/MusicPicker';
+import { music } from '../music';
 
 const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
   { value: 'sanctuary', label: '예배당' },
@@ -82,6 +84,9 @@ export function HostRooms() {
       clearInterval(interval);
     };
   }, [churchId, navigate]);
+
+  // 미리 듣기를 켠 채로 화면을 떠나면 끈다 (방 화면이 열리면 거기서 다시 튼다).
+  useEffect(() => () => music.stop(), []);
 
   function createRoom() {
     if (!title.trim()) return;
@@ -193,6 +198,7 @@ export function HostRooms() {
           />
           <p className="fine-print">진행자 화면을 다른 기기에서 다시 열 때 써요. 학생에게 알려 주지 마세요.</p>
           {formError && <p className="form-error">{formError}</p>}
+          <MusicPicker preview />
           <p className="picker-label">더 재미있게</p>
           <div className="row row-wrap toggle-row">
             <button type="button" className={`btn btn-sm toggle-btn ${teamMode ? 'btn-primary' : ''}`} onClick={() => setTeamMode((v) => !v)}>

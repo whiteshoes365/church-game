@@ -15,6 +15,13 @@ export const WALK_SPEED = 2.2; // units/sec
 export const RUN_SPEED = 4.2;
 export const CRAWL_SPEED = 1.0;
 export const AUTO_WALK_SPEED = RUN_SPEED; // O/X quick-button auto-walk gets there briskly
+// 뛰기·기어가기는 "잠깐 쓰는 기술": 버튼을 누르면 GAIT_ACTIVE_MS 동안만 켜지고,
+// 끝난 순간부터 GAIT_COOLDOWN_MS 동안은 다시 쓸 수 없다 (뛰기·기어가기 따로 센다).
+// 걷기는 기본이고 제한이 없다. 시간·속도는 모두 서버가 정한다 — 클라이언트가
+// 보내는 것은 "방향(크기 1 이하)"과 "기술을 써 달라는 요청"뿐이다.
+export const GAIT_ACTIVE_MS = 3000;
+export const GAIT_COOLDOWN_MS = 10000;
+export const GAIT_SPEEDS = { run: RUN_SPEED, crawl: CRAWL_SPEED };
 export const JUMP_SPEED = 4.5; // initial vertical velocity
 export const GRAVITY = -12;
 export const JUMP_COOLDOWN_MS = 600;
@@ -76,8 +83,10 @@ function createMotion() {
     y: 0,
     vy: 0,
     input: { x: 0, z: 0 },
-    run: false,
-    crawl: false,
+    // 지금 켜져 있는 기술('run' | 'crawl' | null)과 끝나는 시각, 기술별 다시 쓸 수 있는 시각
+    gait: { mode: null, until: 0, readyAt: { run: 0, crawl: 0 } },
+    // 예전 방식(move 메시지의 run/crawl 값)에서 "방금 눌렀는지"를 알아내기 위한 직전 값
+    legacyFlags: { run: false, crawl: false },
     jumpRequested: false,
     jumping: false,
     jumpCooldownUntil: 0,
@@ -97,18 +106,89 @@ export function zoneAt(pos) {
   return null;
 }
 
-export function setPlayerInput(room, deviceId, { dir, run, crawl } = {}) {
+// 반환값: 예전 방식(move 의 run/crawl 값이 false→true 로 바뀜)으로 기술을 요청했다면
+// 그 결과({ ok, ... }), 아니면 null.
+export function setPlayerInput(room, deviceId, { dir, run, crawl } = {}, now = Date.now()) {
   const player = room.players.get(deviceId);
-  if (!player) return;
+  if (!player) return null;
   const m = player.motion;
+  // 방향은 축마다 -1..1 로 자르고, 물리 계산에서 크기를 1 이하로 다시 자른다.
+  // (클라이언트가 큰 숫자를 보내도 그 걸음걸이의 최고 속도를 넘을 수 없다.)
   const x = clamp(Number(dir?.x) || 0, -1, 1);
   const z = clamp(Number(dir?.z) || 0, -1, 1);
   m.input.x = x;
   m.input.z = z;
-  m.run = !!run;
-  m.crawl = !!crawl;
   // Manual joystick/d-pad input always cancels an in-progress O/X auto-walk.
   if (Math.hypot(x, z) > 0.05) m.autoTarget = null;
+  // run/crawl 값은 "계속 뛰게 해 달라"가 아니라 "기술을 써 달라"는 요청으로만 본다.
+  // 계속 true 를 보내도 한 번만 요청되고, 시간·쿨타임은 requestGait 가 지킨다.
+  let requested = null;
+  const wantRun = !!run;
+  const wantCrawl = !!crawl;
+  if (wantRun && !m.legacyFlags.run) requested = requestGait(room, deviceId, 'run', now);
+  else if (wantCrawl && !m.legacyFlags.crawl) requested = requestGait(room, deviceId, 'crawl', now);
+  m.legacyFlags.run = wantRun;
+  m.legacyFlags.crawl = wantCrawl;
+  return requested;
+}
+
+function expireGait(m, now) {
+  if (m.gait.mode && now >= m.gait.until) m.gait.mode = null;
+}
+
+// 뛰기('run')·기어가기('crawl') 켜기, 또는 'walk' 로 지금 기술을 일찍 끄기.
+// - 켜면 GAIT_ACTIVE_MS 동안만 유지되고, 끝난 순간부터 GAIT_COOLDOWN_MS 가 지나야 다시 쓸 수 있다.
+// - 다른 기술이 켜져 있는 동안이나 쿨타임 중의 요청은 거절한다 (걷기 그대로).
+// - 일찍 끄면 그 순간부터 쿨타임을 센다.
+export function requestGait(room, deviceId, mode, now = Date.now()) {
+  const player = room.players.get(deviceId);
+  if (!player) return null;
+  const m = player.motion;
+  expireGait(m, now);
+  let ok = false;
+  let reason = null;
+  if (mode === 'walk' || mode === null || mode === undefined) {
+    if (m.gait.mode) {
+      m.gait.readyAt[m.gait.mode] = now + GAIT_COOLDOWN_MS;
+      m.gait.mode = null;
+    }
+    ok = true;
+  } else if (mode !== 'run' && mode !== 'crawl') {
+    reason = 'unknown';
+  } else if (m.gait.mode) {
+    reason = 'busy';
+  } else if (now < m.gait.readyAt[mode]) {
+    reason = 'cooldown';
+  } else {
+    m.gait.mode = mode;
+    m.gait.until = now + GAIT_ACTIVE_MS;
+    m.gait.readyAt[mode] = m.gait.until + GAIT_COOLDOWN_MS;
+    ok = true;
+  }
+  return { ok, reason, ...gaitStatus(room, deviceId, now) };
+}
+
+// 학생 폰이 버튼에 남은 시간을 보여 줄 수 있게, 시각이 아니라 "남은 ms" 로 알려 준다
+// (폰 시계가 서버와 달라도 맞는다).
+export function gaitStatus(room, deviceId, now = Date.now()) {
+  const player = room.players.get(deviceId);
+  if (!player) return null;
+  const m = player.motion;
+  expireGait(m, now);
+  const mode = m.gait.mode;
+  const cooldownMs = {};
+  for (const key of ['run', 'crawl']) {
+    // 쿨타임은 기술이 끝난 뒤부터 센다: 켜져 있는 동안은 "끝난 뒤 남을 쿨타임" 전체.
+    const from = mode === key ? m.gait.until : now;
+    cooldownMs[key] = Math.max(0, m.gait.readyAt[key] - from);
+  }
+  return {
+    mode,
+    activeMs: mode ? Math.max(0, m.gait.until - now) : 0,
+    cooldownMs,
+    durationMs: GAIT_ACTIVE_MS,
+    cooldownTotalMs: GAIT_COOLDOWN_MS,
+  };
 }
 
 export function requestPlayerJump(room, deviceId) {
@@ -189,13 +269,15 @@ export function setAutoWalkTarget(room, deviceId, zone) {
   player.motion.autoTarget = { x: slot.x, z: slot.z };
 }
 
-export function tickRoomPhysics(room, dtMs) {
+export function tickRoomPhysics(room, dtMs, now = Date.now()) {
   const dt = dtMs / 1000;
-  const now = Date.now();
   const players = [...room.players.values()];
 
   for (const player of players) {
     const m = player.motion;
+    // 이번 틱은 (now - dt, now] 구간을 움직인다: 그 구간이 시작될 때 켜져 있던 기술로 계산한다.
+    const gait = m.gait.mode && now - dtMs < m.gait.until ? m.gait.mode : null; // 'run' | 'crawl' | null(걷기)
+    expireGait(m, now);
     let dirX = 0;
     let dirZ = 0;
     let moving = false;
@@ -224,7 +306,8 @@ export function tickRoomPhysics(room, dtMs) {
     }
 
     if (moving) {
-      const speed = autoWalking ? AUTO_WALK_SPEED : m.crawl ? CRAWL_SPEED : m.run ? RUN_SPEED : WALK_SPEED;
+      // 손으로 움직일 때의 최고 속도는 지금 켜져 있는 걸음걸이가 정한다 (기본은 걷기).
+      const speed = autoWalking ? AUTO_WALK_SPEED : gait ? GAIT_SPEEDS[gait] : WALK_SPEED;
       m.pos.x += dirX * speed * dt;
       m.pos.z += dirZ * speed * dt;
       clampToBounds(m.pos);
@@ -248,7 +331,7 @@ export function tickRoomPhysics(room, dtMs) {
       }
     }
 
-    m.state = m.jumping ? 'jump' : m.crawl ? 'crawl' : moving ? (m.run ? 'run' : 'walk') : 'idle';
+    m.state = m.jumping ? 'jump' : gait === 'crawl' ? 'crawl' : moving ? (gait === 'run' ? 'run' : 'walk') : 'idle';
   }
 
   // Simple pairwise separation so avatars don't overlap heavily. O(n^2) is
@@ -287,6 +370,8 @@ export function serializePositions(room) {
     z: Math.round(p.motion.pos.z * 100) / 100,
     y: Math.round(p.motion.y * 100) / 100,
     state: p.motion.state,
+    // 켜져 있는 기술 (호스트 3D 화면의 "뛰기!/기어가기" 표시용). 걷기일 때는 넣지 않는다.
+    ...(p.motion.gait.mode ? { gait: p.motion.gait.mode } : {}),
   }));
 }
 

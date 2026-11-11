@@ -4,7 +4,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { decodeAvatar, SKIN_TONES, BODY_COLORS, type HatType } from '../avatars';
 import { coneGeometry, getMaterial, sphereGeometry, unitBoxGeometry } from './shared';
-import type { Cosmetics, MoveState } from '../protocol';
+import type { Cosmetics, Gait, MoveState } from '../protocol';
 import { OutfitOverlay, outfitMaterials, ShopExtra, ShopHat, SHOP_HAT_IDS } from './Cosmetics3D';
 
 const HAT_TYPES: HatType[] = ['none', 'cap', 'crown', 'helmet', 'flower', 'visor'];
@@ -91,7 +91,10 @@ interface Props {
   cosmetics?: Cosmetics; // 상점에서 사서 착용한 아이템
   labelSmall?: boolean; // 결과 무대처럼 여럿이 붙어 설 때 작은 이름표
   labelLift?: number; // 이웃 이름표와 겹치지 않게 위로 올리는 높이
+  gait?: Gait; // 뛰기·기어가기를 켠 동안 이름표 위에 표시
 }
+
+const GAIT_LABELS: Record<Gait, string> = { run: '뛰기!', crawl: '기어가기' };
 
 export function VoxelCharacter({
   avatarId,
@@ -106,6 +109,7 @@ export function VoxelCharacter({
   cosmetics,
   labelSmall = false,
   labelLift = 0,
+  gait,
 }: Props) {
   const { skin, body, hat } = decodeAvatar(avatarId);
   const skinColor = SKIN_TONES[skin];
@@ -198,14 +202,14 @@ export function VoxelCharacter({
         swingSpeed = 15;
         swingAmp = 0.9;
         hopAmp = 0.22;
-        lean = 0.22;
+        lean = 0.3;
         break;
       case 'crawl':
         swingSpeed = 5;
-        swingAmp = 0.3;
+        swingAmp = 0.45;
         hopAmp = 0.03;
-        crouch = 0.32;
-        lean = 0.5;
+        crouch = 0.3;
+        lean = 1.15; // 거의 엎드린 자세
         break;
       default:
         break;
@@ -226,7 +230,8 @@ export function VoxelCharacter({
 
     const hop = tuck ? 0 : Math.abs(Math.sin(t * swingSpeed)) * hopAmp;
     bob.position.y = hop - crouch;
-    outer.rotation.x = THREE.MathUtils.lerp(outer.rotation.x, lean, delta * 5);
+    // 몸 기울이기는 캐릭터가 바라보는 방향 기준(앞으로 숙임)이어야 하므로 안쪽 그룹을 돌린다.
+    bob.rotation.x = THREE.MathUtils.lerp(bob.rotation.x, reveal === 'idle' ? lean : 0, delta * 6);
 
     if (spin) outer.rotation.y += delta * 0.9;
 
@@ -267,12 +272,17 @@ export function VoxelCharacter({
           <mesh geometry={unitBoxGeometry} material={shoeMat} scale={[0.19, 0.1, 0.22]} position={[0, -0.42, 0.02]} castShadow />
         </group>
 
-        {showLabel && nickname && (
-          <Html position={[0, nameTagHeight(!!shopHat, labelLift), 0]} center distanceFactor={NAME_TAG_DISTANCE_FACTOR} occlude={false}>
-            <div className={`voxel-name-tag ${labelSmall ? 'small' : ''}`}>{nickname}</div>
-          </Html>
-        )}
       </group>
+
+      {/* 이름표는 몸이 숙여져도(뛰기·기어가기) 같이 눕지 않게 바깥 그룹에 둔다 */}
+      {showLabel && nickname && (
+        <Html position={[0, nameTagHeight(!!shopHat, labelLift), 0]} center distanceFactor={NAME_TAG_DISTANCE_FACTOR} occlude={false}>
+          <div className="voxel-name-wrap">
+            {gait && <div className={`gait-chip ${gait} ${labelSmall ? 'small' : ''}`}>{GAIT_LABELS[gait]}</div>}
+            <div className={`voxel-name-tag ${labelSmall ? 'small' : ''}`}>{nickname}</div>
+          </div>
+        </Html>
+      )}
     </group>
   );
 }

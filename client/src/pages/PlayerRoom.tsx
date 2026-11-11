@@ -6,7 +6,7 @@ import { getDeviceId } from '../deviceId';
 import { BODY_COLORS, DEFAULT_AVATAR_CONFIG, HATS, SKIN_TONES, encodeAvatar, type AvatarConfig } from '../avatars';
 import { AvatarIcon } from '../components/AvatarIcon';
 import { isWebGLAvailable } from '../three/webgl';
-import type { PlayerPosition, RoomSnapshot } from '../protocol';
+import type { Gait, GaitStatus, PlayerPosition, RoomSnapshot } from '../protocol';
 import { PlayerMap } from '../components/PlayerMap';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 import { ShopPanel } from '../components/ShopPanel';
@@ -15,7 +15,7 @@ const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
 const QUESTION_DURATION_MS = 15000;
 const MOVE_SEND_INTERVAL_MS = 83; // ~12 Hz, as specified for the input throttle
-const JOYSTICK_MAX_RADIUS = 52;
+const JOYSTICK_MAX_RADIUS = 66;
 
 function Joystick({ onChange }: { onChange: (dir: { x: number; z: number }) => void }) {
   const baseRef = useRef<HTMLDivElement>(null);
@@ -26,7 +26,7 @@ function Joystick({ onChange }: { onChange: (dir: { x: number; z: number }) => v
     const base = baseRef.current;
     if (!base) return;
     const rect = base.getBoundingClientRect();
-    // The base is smaller on phones, so the travel radius follows its real size.
+    // The base is smaller on small phones, so the travel radius follows its real size.
     const radius = Math.min(JOYSTICK_MAX_RADIUS, rect.width / 2 - 14);
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
@@ -84,72 +84,217 @@ function Joystick({ onChange }: { onChange: (dir: { x: number; z: number }) => v
   );
 }
 
-function MovementControls({ roomId, children }: { roomId?: string; children?: ReactNode }) {
+// ---- 조이스틱 자리 (이 기기에만 저장) ----
+// 가로: 왼쪽 / 가운데 / 오른쪽, 세로: 아래(지도 밑, 기본) / 위(문제 바로 밑, 지도 위).
+// 어느 자리든 조작판은 문제 카드와 겹치지 않는 자기 줄에 놓인다.
+type DockSide = 'left' | 'center' | 'right';
+type DockRow = 'bottom' | 'top';
+interface DockPlace {
+  side: DockSide;
+  row: DockRow;
+}
+const DEFAULT_DOCK: DockPlace = { side: 'left', row: 'bottom' };
+const DOCK_KEY = 'church-game:joystick-dock';
+const DOCK_SIDES: DockSide[] = ['left', 'center', 'right'];
+const DOCK_LABELS: Record<DockSide, string> = { left: '왼쪽', center: '가운데', right: '오른쪽' };
+const DRAG_START_PX = 8; // 이보다 적게 움직이면 "누르기"(다음 자리로)로 본다
+
+function loadDock(): DockPlace {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DOCK_KEY) || 'null');
+    if (raw && DOCK_SIDES.includes(raw.side) && (raw.row === 'bottom' || raw.row === 'top')) return { side: raw.side, row: raw.row };
+  } catch {
+    /* fall through */
+  }
+  return DEFAULT_DOCK;
+}
+
+function saveDock(place: DockPlace) {
+  try {
+    if (place.side === DEFAULT_DOCK.side && place.row === DEFAULT_DOCK.row) localStorage.removeItem(DOCK_KEY);
+    else localStorage.setItem(DOCK_KEY, JSON.stringify(place));
+  } catch {
+    /* 저장이 안 되면 이번 화면에서만 유지 */
+  }
+}
+
+// ---- 뛰기 · 기어가기 (서버가 시간을 정한다. 여기서는 남은 시간을 보여 주기만 한다) ----
+interface GaitView {
+  mode: Gait | null;
+  activeUntil: number; // performance.now() 기준
+  readyAt: Record<Gait, number>;
+  durationMs: number;
+  cooldownTotalMs: number;
+}
+const INITIAL_GAIT: GaitView = { mode: null, activeUntil: 0, readyAt: { run: 0, crawl: 0 }, durationMs: 3000, cooldownTotalMs: 10000 };
+const GAIT_NAMES: Record<Gait, string> = { run: '뛰기', crawl: '기어가기' };
+
+function gaitFromServer(msg: GaitStatus): GaitView {
+  const t = performance.now();
+  const activeUntil = msg.mode ? t + msg.activeMs : 0;
+  const readyAt = { run: 0, crawl: 0 };
+  for (const key of ['run', 'crawl'] as const) {
+    // 쿨타임은 기술이 끝난 뒤부터 센다.
+    readyAt[key] = (msg.mode === key ? activeUntil : t) + (msg.cooldownMs?.[key] ?? 0);
+  }
+  return { mode: msg.mode, activeUntil, readyAt, durationMs: msg.durationMs, cooldownTotalMs: msg.cooldownTotalMs };
+}
+
+function GaitButton({ kind, gait, now, roomId }: { kind: Gait; gait: GaitView; now: number; roomId?: string }) {
+  const active = gait.mode === kind && now < gait.activeUntil;
+  const activeLeft = active ? gait.activeUntil - now : 0;
+  const coolLeft = active ? 0 : Math.max(0, gait.readyAt[kind] - now);
+  const otherActive = !active && gait.mode !== null && now < gait.activeUntil;
+  const cooling = coolLeft > 0;
+  const pressedAt = useRef(0);
+  // 남은 양 막대: 켜진 동안은 줄어들고, 쿨타임 동안은 다시 차오른다.
+  const fill = active ? activeLeft / gait.durationMs : cooling ? 1 - coolLeft / gait.cooldownTotalMs : 0;
+  return (
+    <button
+      type="button"
+      className={`action-btn gait-btn ${kind}-btn ${active ? 'active' : ''} ${cooling ? 'cooling' : ''} ${otherActive ? 'waiting' : ''}`}
+      aria-disabled={cooling || otherActive}
+      aria-label={active ? `${GAIT_NAMES[kind]} 중, ${Math.ceil(activeLeft / 1000)}초 남음` : cooling ? `${GAIT_NAMES[kind]} 쿨타임 ${Math.ceil(coolLeft / 1000)}초` : GAIT_NAMES[kind]}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        if (cooling || otherActive) return;
+        if (active) {
+          // 켜진 버튼을 다시 누르면 일찍 끈다 (방금 누른 두 번 누르기는 무시).
+          if (performance.now() - pressedAt.current > 500) gameSocket.send('gait', { roomId, mode: 'walk' });
+          return;
+        }
+        pressedAt.current = performance.now();
+        gameSocket.send('gait', { roomId, mode: kind });
+      }}
+    >
+      <span className="gait-btn-fill" style={{ width: `${Math.max(0, Math.min(1, fill)) * 100}%` }} aria-hidden />
+      <span className="gait-btn-label">{GAIT_NAMES[kind]}</span>
+      <span className="gait-btn-time">{active ? `${(activeLeft / 1000).toFixed(1)}초 남음` : cooling ? `${Math.ceil(coolLeft / 1000)}초 뒤` : `${Math.round(gait.durationMs / 1000)}초 동안`}</span>
+    </button>
+  );
+}
+
+function MovementControls({ roomId, gait, children }: { roomId?: string; gait: GaitView; children?: ReactNode }) {
   const dirRef = useRef({ x: 0, z: 0 });
-  const runRef = useRef(false);
-  const crawlRef = useRef(false);
-  const [running, setRunning] = useState(false);
-  const [crawling, setCrawling] = useState(false);
+  const [dock, setDock] = useState<DockPlace>(loadDock);
+  const [drag, setDrag] = useState<{ dx: number; dy: number; target: DockPlace } | null>(null);
+  const dragRef = useRef<{ pointerId: number; x0: number; y0: number; moved: boolean } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [now, setNow] = useState(() => performance.now());
 
   useEffect(() => {
     const id = setInterval(() => {
-      gameSocket.send('move', { roomId, dir: dirRef.current, run: runRef.current, crawl: crawlRef.current });
+      gameSocket.send('move', { roomId, dir: dirRef.current });
     }, MOVE_SEND_INTERVAL_MS);
     return () => clearInterval(id);
   }, [roomId]);
 
-  function setRun(active: boolean) {
-    runRef.current = active;
-    setRunning(active);
+  // 버튼의 남은 시간 숫자를 갱신한다 (켜져 있거나 쿨타임일 때만 돈다).
+  const busyUntil = Math.max(gait.activeUntil, gait.readyAt.run, gait.readyAt.crawl);
+  useEffect(() => {
+    setNow(performance.now());
+    if (busyUntil <= performance.now()) return;
+    const id = setInterval(() => {
+      const t = performance.now();
+      setNow(t);
+      if (t > busyUntil + 150) clearInterval(id);
+    }, 100);
+    return () => clearInterval(id);
+  }, [busyUntil]);
+
+  function place(next: DockPlace) {
+    setDock(next);
+    saveDock(next);
   }
 
+  // 손가락 위치로 놓을 자리를 고른다: 화면을 가로로 3등분, 세로는 화면 가운데보다 위/아래.
+  function targetAt(clientX: number, clientY: number): DockPlace {
+    const w = window.innerWidth;
+    const side: DockSide = clientX < w / 3 ? 'left' : clientX > (w * 2) / 3 ? 'right' : 'center';
+    const row: DockRow = clientY < window.innerHeight * 0.5 ? 'top' : 'bottom';
+    return { side, row };
+  }
+
+  function endDrag(e: ReactPointerEvent<HTMLButtonElement>, cancelled: boolean) {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    setDrag(null);
+    if (cancelled) return;
+    if (d.moved) place(targetAt(e.clientX, e.clientY));
+    // 끌지 않고 누르기만 하면 다음 자리로 (왼쪽 → 가운데 → 오른쪽)
+    else place({ side: DOCK_SIDES[(DOCK_SIDES.indexOf(dock.side) + 1) % DOCK_SIDES.length], row: dock.row });
+  }
+
+  const walking = !(gait.mode && now < gait.activeUntil);
+  const isDefault = dock.side === DEFAULT_DOCK.side && dock.row === DEFAULT_DOCK.row;
+
   return (
-    <div className="movement-controls">
-      <Joystick onChange={(dir) => { dirRef.current = dir; }} />
-      <div className="controls-side">
-        {children}
-        <div className="action-buttons">
-        <button
-          type="button"
-          className="action-btn jump-btn"
-          onPointerDown={(e) => {
-            e.preventDefault();
-            gameSocket.send('jump', { roomId });
-          }}
-        >
-          점프
-        </button>
-        <button
-          type="button"
-          className={`action-btn run-btn ${running ? 'active' : ''}`}
-          onPointerDown={(e) => {
-            e.preventDefault();
-            try {
-              e.currentTarget.setPointerCapture(e.pointerId);
-            } catch {
-              /* best-effort */
-            }
-            setRun(true);
-          }}
-          onPointerUp={() => setRun(false)}
-          onPointerCancel={() => setRun(false)}
-          onLostPointerCapture={() => setRun(false)}
-        >
-          달리기
-        </button>
-        <button
-          type="button"
-          className={`action-btn crawl-btn ${crawling ? 'active' : ''}`}
-          onPointerDown={(e) => {
-            e.preventDefault();
-            crawlRef.current = !crawlRef.current;
-            setCrawling(crawlRef.current);
-          }}
-        >
-          기어가기
-        </button>
+    <div ref={rootRef} className={`movement-controls dock-${dock.side} dock-row-${dock.row} ${drag ? 'dragging' : ''}`} data-dock={`${dock.side}-${dock.row}`}>
+      <div className="joy-slot" style={drag ? { transform: `translate(${drag.dx}px, ${drag.dy}px)` } : undefined}>
+        <div className="joy-tools">
+          <button
+            type="button"
+            className="joy-grip"
+            aria-label={`조이스틱 자리 옮기기 (지금: ${DOCK_LABELS[dock.side]} ${dock.row === 'top' ? '위' : '아래'})`}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              if (dragRef.current) return;
+              dragRef.current = { pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, moved: false };
+              try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              } catch {
+                /* best-effort */
+              }
+            }}
+            onPointerMove={(e) => {
+              const d = dragRef.current;
+              if (!d || d.pointerId !== e.pointerId) return;
+              e.preventDefault();
+              const dx = e.clientX - d.x0;
+              const dy = e.clientY - d.y0;
+              if (!d.moved && Math.hypot(dx, dy) < DRAG_START_PX) return;
+              d.moved = true;
+              setDrag({ dx, dy, target: targetAt(e.clientX, e.clientY) });
+            }}
+            onPointerUp={(e) => endDrag(e, false)}
+            onPointerCancel={(e) => endDrag(e, true)}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <span className="joy-grip-dots" aria-hidden />
+            옮기기
+          </button>
+          <button type="button" className="joy-reset" disabled={isDefault} onClick={() => place(DEFAULT_DOCK)}>
+            초기화
+          </button>
         </div>
+        <Joystick onChange={(dir) => { dirRef.current = dir; }} />
       </div>
+      <div className="ox-slot">{children}</div>
+      <div className="action-slot">
+        <div className="action-buttons">
+          <button
+            type="button"
+            className="action-btn jump-btn"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              gameSocket.send('jump', { roomId });
+            }}
+          >
+            점프
+          </button>
+          <GaitButton kind="run" gait={gait} now={now} roomId={roomId} />
+          <GaitButton kind="crawl" gait={gait} now={now} roomId={roomId} />
+        </div>
+        <p className={`gait-status ${walking ? '' : gait.mode ?? ''}`}>
+          지금: <b>{walking ? '걷기' : GAIT_NAMES[gait.mode as Gait]}</b>
+        </p>
+      </div>
+      {drag && (
+        <div className="dock-drop-hint" role="status">
+          놓으면 <b>{DOCK_LABELS[drag.target.side]} {drag.target.row === 'top' ? '위' : '아래'}</b>로 옮겨요
+        </div>
+      )}
     </div>
   );
 }
@@ -170,6 +315,7 @@ export function PlayerRoom() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [attendance, setAttendance] = useState<{ streak: number; streakBonus: number } | null>(null);
+  const [gait, setGait] = useState<GaitView>(INITIAL_GAIT);
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
 
   useEffect(() => {
@@ -179,6 +325,11 @@ export function PlayerRoom() {
       setError(null);
       setRoom(msg.room);
       if (msg.attendance) setAttendance(msg.attendance);
+      // 새로고침·재접속 뒤에도 남은 쿨타임을 이어서 보여 준다.
+      gameSocket.send('gait', { roomId, mode: 'status' });
+    });
+    const offGait = gameSocket.on('gait', (msg: GaitStatus) => {
+      if (msg.roomId === roomId) setGait(gaitFromServer(msg));
     });
     const offState = gameSocket.on('roomState', (msg) => {
       if (msg.room.id === roomId) setRoom(msg.room);
@@ -191,6 +342,7 @@ export function PlayerRoom() {
       setPositions(next);
     });
     return () => {
+      offGait();
       offPositions();
       offJoined();
       offState();
@@ -374,7 +526,7 @@ export function PlayerRoom() {
                 <div
                   className="timer-bar-fill"
                   style={{
-                    width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / QUESTION_DURATION_MS) * 100))}%`,
+                    width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / (room.questionDurationMs ?? QUESTION_DURATION_MS)) * 100))}%`,
                   }}
                 />
               </div>
@@ -397,7 +549,7 @@ export function PlayerRoom() {
             </p>
             <p className="play-hint play-rule">정답 공개 때 서 있는 O/X 자리로 채점해요. (처음 누른 버튼이 아니에요)</p>
 
-            <MovementControls roomId={roomId}>
+            <MovementControls roomId={roomId} gait={gait}>
               <div className="ox-buttons">
                 <button className="ox-button o" disabled={answered} onClick={() => answer('O')}>
                   O

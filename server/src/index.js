@@ -29,6 +29,8 @@ import {
   assignTeam,
   buildFinalResult,
   setHostPassword,
+  requestGait,
+  gaitStatus,
 } from './state.js';
 import { LEVELS, QUESTIONS_BY_LEVEL } from './questions.js';
 import {
@@ -461,7 +463,21 @@ function handleMessage(socket, msg) {
     case 'move': {
       const room = getRoom(msg.roomId);
       if (!room) throw new Error('방을 찾을 수 없어요.');
-      if (socket.meta.deviceId) setPlayerInput(room, socket.meta.deviceId, { dir: msg.dir, run: msg.run, crawl: msg.crawl });
+      if (socket.meta.deviceId) {
+        const requested = setPlayerInput(room, socket.meta.deviceId, { dir: msg.dir, run: msg.run, crawl: msg.crawl });
+        if (requested) send(socket, 'gait', { roomId: room.id, ...requested });
+      }
+      break;
+    }
+
+    // 뛰기·기어가기 요청 (mode: 'run' | 'crawl' | 'walk'). 시간·쿨타임은 서버가 지키고,
+    // 결과(켜졌는지, 남은 시간)를 요청한 학생에게만 돌려준다.
+    case 'gait': {
+      const room = getRoom(msg.roomId);
+      if (!room) throw new Error('방을 찾을 수 없어요.');
+      if (socket.meta.role !== 'player' || socket.meta.roomId !== room.id || !socket.meta.deviceId) break;
+      const result = msg.mode === 'status' ? gaitStatus(room, socket.meta.deviceId) : requestGait(room, socket.meta.deviceId, msg.mode);
+      if (result) send(socket, 'gait', { roomId: room.id, ...result });
       break;
     }
 

@@ -2647,3 +2647,667 @@ button {
     padding: 4px 2px;
   }
 }
+
+/* ======================================================================
+   호스트·학생 화면 업그레이드 (feat/host-player-upgrade)
+   ====================================================================== */
+
+/* ---- 호스트: 문제·정답 띠 (예전 16px 의 4배 이상, 화면 전체 폭) ----
+   글자는 64px(1280) ~ 80px(1920)에서 시작하고, 낱말 단위로 줄바꿈한다.
+   아주 긴 문제만 FitText 가 허용 높이에 맞을 때까지 줄인다. */
+.question-banner {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 20px 14px;
+  background: linear-gradient(135deg, var(--stone-hi) 25%, var(--stone-lo) 25%, var(--stone-lo) 50%, var(--stone-hi) 50%, var(--stone-hi) 75%, var(--stone-lo) 75%);
+  background-size: 16px 16px;
+  border: 4px solid var(--border);
+  box-shadow: inset -4px -4px 0 0 var(--stone-shadow), inset 4px 4px 0 0 rgba(255, 255, 255, 0.5);
+  min-width: 0;
+}
+
+.question-banner-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.question-banner-meta .badge {
+  flex-shrink: 0;
+  font-size: clamp(14px, 1.2vw, 22px);
+  white-space: nowrap;
+}
+
+.question-banner-meta .timer-bar {
+  flex: 1;
+  height: clamp(14px, 1.3vw, 24px);
+  border-width: 3px;
+}
+
+.question-banner-text {
+  margin: 0;
+  font-size: clamp(64px, 4vw, 80px);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  overflow: hidden;
+  color: var(--text);
+}
+
+.question-banner.reveal {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 20px;
+  background: #ffe9a8;
+}
+
+.question-banner-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+
+.question-banner-explanation {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: clamp(18px, 1.6vw, 30px);
+  line-height: 1.3;
+  color: var(--text-dim);
+  word-break: keep-all;
+}
+
+.question-banner-explanation .badge {
+  flex-shrink: 0;
+  font-size: 0.7em;
+}
+
+.answer-block {
+  flex-shrink: 0;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: clamp(120px, 10vw, 190px);
+  padding: 6px 0 10px;
+  color: #fff;
+  border: 5px solid var(--border);
+  box-shadow: inset -6px -6px 0 0 rgba(0, 0, 0, 0.25), inset 6px 6px 0 0 rgba(255, 255, 255, 0.35);
+}
+
+.answer-block.o {
+  background: var(--o-color);
+}
+
+.answer-block.x {
+  background: var(--x-color);
+}
+
+.answer-block small {
+  font-size: clamp(16px, 1.4vw, 26px);
+  font-weight: 700;
+}
+
+.answer-block b {
+  font-size: clamp(72px, 6vw, 116px);
+  line-height: 1;
+  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* 문제·정답 띠가 위에 있을 때는 무대 위 빈 HUD 줄을 없애 3D 무대를 넓힌다 */
+.host-hud.empty {
+  display: none;
+}
+
+.host-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .question-banner-text {
+    font-size: clamp(26px, 7vw, 64px);
+  }
+  .question-banner.reveal {
+    flex-direction: column;
+  }
+}
+
+/* ---- 호스트 3D: 정답 공개 때 머리 위 점수 표시 ---- */
+.score-popup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9em;
+  height: 1.5em;
+  padding: 0 0.3em;
+  font-family: 'Galmuri11', 'DungGeunMo', monospace;
+  font-size: clamp(38px, 3.2vw, 62px);
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  border: 0.09em solid #fff;
+  outline: 0.07em solid #0d1117;
+  text-shadow: 0.05em 0.05em 0 rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  animation: score-pop 3.2s ease-out both;
+}
+
+.score-popup.correct {
+  background: #1fa64a;
+}
+
+.score-popup.wrong {
+  background: #e02d2d;
+}
+
+/* 빼기(−) 표시는 글꼴에 기대지 않고 흰 막대로 그린다 */
+.score-popup-minus {
+  display: block;
+  width: 0.95em;
+  height: 0.24em;
+  background: #fff;
+  box-shadow: 0.05em 0.05em 0 rgba(0, 0, 0, 0.45);
+}
+
+@keyframes score-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(40%) scale(0.3);
+  }
+  9% {
+    opacity: 1;
+    transform: translateY(0) scale(1.3);
+  }
+  16% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(-25%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-190%) scale(0.9);
+  }
+}
+
+/* ---- 호스트 3D: 뛰기·기어가기 표시 (이름표 바로 위) ---- */
+.voxel-name-wrap {
+  position: relative;
+  pointer-events: none;
+}
+
+.gait-chip {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translate(-50%, -3px);
+  padding: 2px 10px;
+  font-family: 'Galmuri11', 'DungGeunMo', monospace;
+  font-size: clamp(18px, 1.8vw, 30px);
+  font-weight: 800;
+  color: #1c2330;
+  background: #ffd23c;
+  border: 3px solid #0d1117;
+  white-space: nowrap;
+  animation: gait-blink 0.5s steps(2, jump-none) infinite;
+}
+
+.gait-chip.small {
+  font-size: clamp(13px, 1.2vw, 21px);
+  padding: 1px 6px;
+  border-width: 2px;
+}
+
+.gait-chip.crawl {
+  color: #fff;
+  background: #7a4fd0;
+}
+
+@keyframes gait-blink {
+  from {
+    filter: brightness(1);
+  }
+  to {
+    filter: brightness(1.25);
+  }
+}
+
+/* ---- 배경 음악 고르기 ---- */
+.music-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 3px solid var(--border);
+}
+
+.setup-panel.music-panel {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: none;
+}
+
+.setup-panel .music-picker {
+  background: var(--surface);
+  border-width: 4px;
+  box-shadow: inset -4px -4px 0 0 rgba(0, 0, 0, 0.15), inset 4px 4px 0 0 rgba(255, 255, 255, 0.5);
+}
+
+.music-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.music-now {
+  padding: 1px 8px;
+  font-size: 0.85em;
+  font-weight: 700;
+  color: #fff;
+  background: var(--text-dim);
+  border: 2px solid var(--border);
+}
+
+.music-now.on {
+  background: var(--o-color);
+}
+
+.music-tracks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.music-track {
+  padding: 7px 4px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface);
+  border: 3px solid var(--border);
+  cursor: pointer;
+  word-break: keep-all;
+  line-height: 1.2;
+}
+
+.setup-panel .music-track {
+  background: #fff;
+}
+
+.music-track.selected {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: inset 3px 3px 0 0 rgba(0, 0, 0, 0.25);
+}
+
+.music-track.music-off {
+  grid-column: 1 / -1;
+}
+
+.music-track.music-off.selected {
+  background: var(--text-dim);
+}
+
+.music-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.music-volume-label {
+  flex-shrink: 0;
+}
+
+.music-volume input[type='range'],
+.music-mini-range {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.music-volume-value {
+  flex-shrink: 0;
+  min-width: 3em;
+  text-align: right;
+}
+
+.music-hint {
+  margin: 0;
+}
+
+.music-mini {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 14px;
+  font-weight: 700;
+  background: var(--surface);
+  border: 3px solid var(--border);
+}
+
+.music-mini-select {
+  max-width: 11em;
+  padding: 3px 4px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--text);
+  background: #fff;
+  border: 2px solid var(--border);
+  border-radius: 0;
+}
+
+.music-mini-range {
+  flex: none;
+  width: 90px;
+}
+
+.music-mini-value {
+  min-width: 2.8em;
+  text-align: right;
+}
+
+/* ---- 학생 폰: 넓은 조이스틱 + 자리 옮기기 ----
+   조작판은 한 줄(3칸) 격자: 조이스틱 칸 / O·X 칸 / 동작 버튼 칸.
+   자리(왼쪽·가운데·오른쪽)에 따라 칸 순서만 바꾸므로 어떤 자리에서도 서로 겹치지 않는다. */
+.play-screen .player-map-fill,
+.play-screen .play-hint {
+  order: 2;
+}
+
+.play-screen .movement-controls {
+  order: 3;
+  position: relative;
+  display: grid;
+  gap: 6px 10px;
+  align-items: center;
+  touch-action: none;
+}
+
+.play-screen .link-btn {
+  order: 4;
+}
+
+/* 위쪽 자리: 문제 카드 바로 아래(지도 위). 문제 글은 가리지 않는다. */
+.play-screen .movement-controls.dock-row-top {
+  order: 1;
+}
+
+.movement-controls.dock-left {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: 'joy ox' 'joy act';
+}
+
+.movement-controls.dock-right {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'ox joy' 'act joy';
+}
+
+.movement-controls.dock-center {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas: 'ox joy act';
+}
+
+.joy-slot {
+  grid-area: joy;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  touch-action: none;
+}
+
+.movement-controls.dragging .joy-slot {
+  position: relative;
+  z-index: 5;
+  opacity: 0.85;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.25));
+}
+
+.ox-slot {
+  grid-area: ox;
+  min-width: 0;
+  align-self: end;
+}
+
+.action-slot {
+  grid-area: act;
+  min-width: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.movement-controls.dock-center .ox-slot,
+.movement-controls.dock-center .action-slot {
+  align-self: center;
+}
+
+.movement-controls.dock-center .ox-buttons {
+  grid-template-columns: 1fr;
+}
+
+.play-screen .movement-controls.dock-center .action-buttons {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.play-screen .movement-controls.dock-center .action-btn {
+  min-height: 34px;
+  padding: 3px 2px;
+}
+
+/* 가운데 자리에서는 옆 칸이 좁으므로 이름과 남은 시간을 두 줄로 쌓는다 (한 줄이면 「기어가기」가 잘린다) */
+.play-screen .movement-controls.dock-center .gait-btn {
+  min-height: 40px;
+}
+
+.joy-tools {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  justify-content: center;
+}
+
+.joy-grip,
+.joy-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  min-height: 26px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  background: #fff;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.joy-grip {
+  cursor: grab;
+  background: #ffe066;
+}
+
+.joy-reset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 옮기기 손잡이의 점 6개 */
+.joy-grip-dots {
+  width: 8px;
+  height: 12px;
+  background-image: radial-gradient(circle, var(--border) 1.3px, transparent 1.6px);
+  background-size: 4px 4px;
+}
+
+.play-screen .joystick-base {
+  width: min(41vw, 160px);
+  height: min(41vw, 160px);
+  min-width: 0;
+  align-self: center;
+  touch-action: none;
+}
+
+.play-screen .joystick-knob {
+  width: 62px;
+  height: 62px;
+  margin: -31px 0 0 -31px;
+  pointer-events: none;
+}
+
+.dock-drop-hint {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 20;
+  padding: 8px 14px;
+  font-size: 14px;
+  color: #fff;
+  background: rgba(13, 17, 23, 0.9);
+  border: 3px solid #fff;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.dock-drop-hint b {
+  color: #ffe066;
+}
+
+/* 화면이 낮은 폰(세로 ~670 이하)에서는 조이스틱을 조금 줄여 지도 자리를 남긴다 */
+@media (max-height: 700px) {
+  .play-screen .joystick-base {
+    width: min(38vw, 144px);
+    height: min(38vw, 144px);
+  }
+}
+
+@media (max-height: 600px) {
+  .play-screen .joystick-base {
+    width: min(32vw, 120px);
+    height: min(32vw, 120px);
+  }
+  .play-screen .joystick-knob {
+    width: 50px;
+    height: 50px;
+    margin: -25px 0 0 -25px;
+  }
+}
+
+/* ---- 학생 폰: 뛰기·기어가기 버튼 (남은 시간 표시) ---- */
+.gait-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.play-screen .action-btn.gait-btn {
+  padding: 4px 2px;
+  line-height: 1.15;
+}
+
+.gait-btn-label,
+.gait-btn-time {
+  position: relative;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.gait-btn-time {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.95;
+}
+
+.gait-btn-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+}
+
+.gait-btn.run-btn {
+  background: #d9822b;
+}
+
+.gait-btn.crawl-btn {
+  background: #7a4fd0;
+}
+
+.gait-btn.run-btn.active {
+  background: #f0a030;
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.gait-btn.crawl-btn.active {
+  background: #9a6cf0;
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.gait-btn.cooling,
+.gait-btn.waiting {
+  background: #7d8590;
+  cursor: default;
+  box-shadow: none;
+}
+
+.gait-btn.cooling .gait-btn-fill {
+  background: rgba(13, 17, 23, 0.3);
+}
+
+.gait-status {
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.gait-status b {
+  color: var(--text);
+}
+
+.gait-status.run b {
+  color: #b8640f;
+}
+
+.gait-status.crawl b {
+  color: #6a3fc0;
+}

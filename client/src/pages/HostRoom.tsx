@@ -9,6 +9,9 @@ import { loadGroupSession, normalizeGroupCode, saveGroupSession } from '../group
 import { getHostKey } from '../hostKeys';
 import { LEVEL_CLASS, LEVEL_LABELS } from '../levels';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
+import { FitText } from '../components/FitText';
+import { MusicPicker } from '../components/MusicPicker';
+import { music } from '../music';
 
 const HostCanvas3D = lazy(() => import('../three/HostCanvas3D'));
 const ResultCanvas3D = lazy(() => import('../three/ResultCanvas3D'));
@@ -120,6 +123,14 @@ export function HostRoom() {
     return () => clearInterval(id);
   }, [room?.status]);
 
+  // 배경 음악: 진행자 화면이 열려 있는 동안만 이 기기에서 난다 (저장해 둔 곡·소리 크기 그대로).
+  const roomLoaded = !!room;
+  useEffect(() => {
+    if (!roomLoaded) return;
+    music.start();
+    return () => music.stop();
+  }, [roomLoaded]);
+
   if (!room) {
     return (
       <div className="screen">
@@ -205,7 +216,8 @@ export function HostRoom() {
             {room.pin && room.status !== 'lobby' && <span className="badge badge-pin">방 PIN {room.pin}</span>}
           </p>
         </div>
-        <div className="row">
+        <div className="row host-header-actions">
+          {!canSetup && <MusicPicker compact />}
           {(room.status === 'lobby' || room.status === 'finished') && (
             <button className="btn btn-primary btn-sm" onClick={() => gameSocket.send('startQuiz', { roomId })}>
               {room.status === 'finished' ? '다시 시작' : 'OX 퀴즈 시작'}
@@ -234,45 +246,52 @@ export function HostRoom() {
 
       {error && <p className="form-error form-error-banner">{error}</p>}
 
+      {/* 문제·정답은 화면 위쪽 전체 폭 띠에 아주 크게 (3D 무대를 가리지 않게 무대 밖에 둔다) */}
+      {room.status === 'question' && room.question && (
+        <div className="question-banner">
+          <div className="question-banner-meta">
+            <span className="badge">
+              문제 {room.question.index + 1} / {room.question.total}
+            </span>
+            {room.question.category && (
+              <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>{CATEGORY_LABELS[room.question.category]}</span>
+            )}
+            <div className="timer-bar">
+              <div
+                className="timer-bar-fill"
+                style={{
+                  width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / (room.questionDurationMs ?? QUESTION_DURATION_MS)) * 100))}%`,
+                }}
+              />
+            </div>
+          </div>
+          <FitText className="question-banner-text" text={room.question.text ?? ''} maxHeightRatio={0.34} minPx={30} />
+        </div>
+      )}
+
+      {room.status === 'reveal' && room.lastResult && (
+        <div className="question-banner reveal">
+          <div className={`answer-block ${room.lastResult.correctAnswer === 'O' ? 'o' : 'x'}`}>
+            <small>정답</small>
+            <b>{room.lastResult.correctAnswer}</b>
+          </div>
+          <div className="question-banner-body">
+            <FitText className="question-banner-text" text={room.lastResult.questionText} maxHeightRatio={0.27} minPx={30} />
+            {(room.lastResult.explanation || room.lastResult.category) && (
+              <p className="question-banner-explanation">
+                {room.lastResult.category && (
+                  <span className={`badge badge-category ${CATEGORY_CLASS[room.lastResult.category]}`}>{CATEGORY_LABELS[room.lastResult.category]}</span>
+                )}
+                {room.lastResult.explanation}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="host-main">
         <div className="map-column">
-          <div className="host-hud">
-            {room.status === 'question' && room.question && (
-              <div className="question-strip">
-                <span className="badge">
-                  문제 {room.question.index + 1} / {room.question.total}
-                </span>
-                {room.question.category && (
-                  <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>
-                    {CATEGORY_LABELS[room.question.category]}
-                  </span>
-                )}
-                <p className="question-strip-text">{room.question.text}</p>
-                <div className="timer-bar">
-                  <div
-                    className="timer-bar-fill"
-                    style={{
-                      width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / QUESTION_DURATION_MS) * 100))}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {room.status === 'reveal' && room.lastResult && (
-              <div className="reveal-banner stack">
-                <span>
-                  정답: {room.lastResult.correctAnswer} · {room.lastResult.questionText}
-                  {room.lastResult.category && (
-                    <span className={`badge badge-category ${CATEGORY_CLASS[room.lastResult.category]}`} style={{ marginLeft: 8 }}>
-                      {CATEGORY_LABELS[room.lastResult.category]}
-                    </span>
-                  )}
-                </span>
-                {room.lastResult.explanation && <p className="explanation-text">{room.lastResult.explanation}</p>}
-              </div>
-            )}
-
+          <div className={`host-hud ${final ? '' : 'empty'}`}>
             {final && (
               <div className={`result-banner ${final.team ? 'team' : ''}`}>
                 {final.team ? (
@@ -355,6 +374,7 @@ export function HostRoom() {
                     players={room.players}
                     status={room.status}
                     correctAnswer={room.lastResult?.correctAnswer ?? null}
+                    correctPlayerIds={room.lastResult?.correctPlayerIds}
                     positions={positions}
                     zones={room.zones}
                   />
@@ -391,6 +411,11 @@ export function HostRoom() {
         </div>
 
         <div className={`side-panel ${final ? 'side-finished' : ''}`}>
+          {canSetup && (
+            <div className="setup-panel music-panel">
+              <MusicPicker />
+            </div>
+          )}
           {canSetup && (
             <div className="setup-panel">
               <div className="setup-row">

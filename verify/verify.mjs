@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import WebSocket from 'ws';
 import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL, CATEGORIES, DEFAULT_QUESTION_COUNT } from '../server/src/questions.js';
-import { ZONES, MAP_BOUNDS, WALK_SPEED, RUN_SPEED, CRAWL_SPEED } from '../server/src/state.js';
+import { ZONES, MAP_BOUNDS, WALK_SPEED, RUN_SPEED, CRAWL_SPEED, GAIT_ACTIVE_MS, GAIT_COOLDOWN_MS } from '../server/src/state.js';
+import * as gameState from '../server/src/state.js';
 import * as records from '../server/src/records.js';
 
 // Question text is unique across all levels (verify looks questions up by
@@ -131,14 +132,22 @@ async function driveFor(client, roomId, dir, { run = false, crawl = false } = {}
   await sleep(150); // let the server settle on the final position
 }
 
+// 조이스틱 입력으로 구역 한가운데까지 간다. 뛰기는 3초짜리 기술이라 처음에 한 번만
+// 요청하고(먼 길을 빨리 가려고), 그 뒤로는 위치를 보면서 가운데 근처에 닿으면 멈춘다.
 async function moveIntoZone(host, roomId, client, deviceId, zoneBox) {
-  const start = await freshPosition(host, roomId, deviceId);
   const targetX = (zoneBox.xmin + zoneBox.xmax) / 2;
   const targetZ = (zoneBox.zmin + zoneBox.zmax) / 2;
-  const dist = Math.hypot(targetX - start.x, targetZ - start.z);
-  const dir = { x: (targetX - start.x) / dist, z: (targetZ - start.z) / dist };
-  const travelMs = (dist / RUN_SPEED) * 1000 + 500;
-  await driveFor(client, roomId, dir, { run: true }, travelMs);
+  client.send('gait', { roomId, mode: 'run' });
+  const deadline = Date.now() + 9000;
+  while (Date.now() < deadline) {
+    const pos = await freshPosition(host, roomId, deviceId);
+    const dist = Math.hypot(targetX - pos.x, targetZ - pos.z);
+    if (dist < 0.7) break;
+    client.send('move', { roomId, dir: { x: (targetX - pos.x) / dist, z: (targetZ - pos.z) / dist } });
+  }
+  client.send('move', { roomId, dir: { x: 0, z: 0 } });
+  client.send('gait', { roomId, mode: 'walk' });
+  await sleep(150); // let the server settle on the final position
 }
 
 function inZone(pos, zoneBox) {
@@ -172,19 +181,44 @@ async function waitUntilAllInZones(host, roomId, targets, maxWaitMs) {
 }
 
 // Measures actual on-wire speed (units/sec) for a player driven in a fixed
-// direction for durationMs, so run/walk/crawl can be compared end to end
-// through the real input -> physics tick -> broadcast pipeline.
-async function measureSpeed(host, roomId, client, deviceId, opts, durationMs) {
+// direction, so run/walk/crawl can be compared end to end through the real
+// input -> physics tick -> broadcast pipeline. Both samples are taken while
+// the player is already moving (after a short lead-in), and the elapsed time
+// comes from when the two broadcasts arrived, so start-up and stop delays do
+// not blur the number.
+// opts: { run, crawl } legacy flags on the move message, `gait` to request a
+// burst first, `dir` to override the (possibly forged) direction vector,
+// `extra` for extra forged fields on the move message.
+async function measureSpeed(host, roomId, client, deviceId, opts = {}, durationMs = 700) {
   const current = await freshPosition(host, roomId, deviceId);
-  // Head toward the center so a few seconds of movement never clips a map bound.
-  const dir = { x: current.x > 0 ? -1 : 1, z: 0 };
-  const before = await freshPosition(host, roomId, deviceId);
-  const t0 = Date.now();
-  await driveFor(client, roomId, dir, opts, durationMs);
-  const after = await freshPosition(host, roomId, deviceId);
-  const t1 = Date.now();
-  const dist = Math.hypot(after.x - before.x, after.z - before.z);
-  return dist / ((t1 - t0) / 1000);
+  // Head toward the center so a second of movement never clips a map bound.
+  const sign = current.x > 0 ? -1 : 1;
+  const dir = opts.dir ? { x: opts.dir.x * sign, z: opts.dir.z } : { x: sign, z: 0 };
+  if (opts.gait) client.send('gait', { roomId, mode: opts.gait });
+  const payload = { roomId, dir, ...(opts.extra || {}) };
+  if (opts.run !== undefined) payload.run = opts.run;
+  if (opts.crawl !== undefined) payload.crawl = opts.crawl;
+  client.send('move', payload);
+  const id = setInterval(() => client.send('move', payload), 80);
+  try {
+    await sleep(200); // lead-in: input has reached the server and the avatar is at speed
+    const before = await freshPosition(host, roomId, deviceId);
+    const t0 = Date.now();
+    await sleep(durationMs);
+    const after = await freshPosition(host, roomId, deviceId);
+    const t1 = Date.now();
+    return Math.hypot(after.x - before.x, after.z - before.z) / ((t1 - t0) / 1000);
+  } finally {
+    clearInterval(id);
+    client.send('move', { roomId, dir: { x: 0, z: 0 } });
+  }
+}
+
+// 'gait' 요청을 보내고 그 응답을 받는다 (이전에 쌓인 응답은 버린다).
+async function requestGaitOverWire(client, roomId, mode) {
+  client.buffer = client.buffer.filter((m) => m.type !== 'gait');
+  client.send('gait', { roomId, mode });
+  return client.waitFor('gait', (m) => m.roomId === roomId);
 }
 
 // 출석·달란트 기록은 실제 데이터 폴더를 건드리지 않도록 임시 폴더에만 쓴다.
@@ -414,9 +448,197 @@ function verifyRulesUnit() {
   log('rule unit checks ok (unique nickname, attendance-on-enter, weekly cap trim, manual override, no negative balance, shop buy/equip/no double charge)');
 }
 
+// ---------------------------------------------------------------------------
+// 뛰기·기어가기 규칙 (단위 검증): 서버 시계를 직접 넣어 주므로 실제 시간이 걸리지 않고
+// 타이밍에 흔들리지 않는다. 3초 유지 → 끝난 뒤 10초 쿨타임, 속도 상한, 위조 입력.
+// ---------------------------------------------------------------------------
+function verifyGaitUnit() {
+  const S = gameState;
+  assert(GAIT_ACTIVE_MS === 3000 && GAIT_COOLDOWN_MS === 10000, '뛰기·기어가기: 3초 유지, 10초 쿨타임');
+  const church = S.findOrCreateChurch(`걸음걸이-단위-${Date.now()}`);
+  const room = S.createRoom({ churchId: church.id, title: '걸음걸이', capacity: 'unlimited' });
+  const id = 'gait-unit';
+  const player = S.joinRoom(room, { deviceId: id, nickname: '걸음', avatar: 'circle-blue' });
+  const m = player.motion;
+  const TICK = S.PHYSICS_TICK_MS;
+  let now = 1_000_000;
+  // ms 동안 물리 틱을 돌리고 x 로 간 거리를 돌려준다 (매번 왼쪽 끝 근처에서 출발).
+  const travel = (ms) => {
+    m.pos.x = -7.5;
+    m.pos.z = 8;
+    const x0 = m.pos.x;
+    for (let t = 0; t < ms; t += TICK) {
+      now += TICK;
+      S.tickRoomPhysics(room, TICK, now);
+    }
+    return m.pos.x - x0;
+  };
+  const near = (value, expected, label) => assert(Math.abs(value - expected) < 0.02, `${label}: ${value.toFixed(3)} (기대 ${expected})`);
+  const posOf = () => S.serializePositions(room).find((p) => p.id === id);
+
+  // 걷기: 기본, 제한 없음
+  S.setPlayerInput(room, id, { dir: { x: 1, z: 0 } }, now);
+  near(travel(1000), WALK_SPEED, '걷기 1초');
+  assert(posOf().state === 'walk' && posOf().gait === undefined, '걷는 중에는 상태 walk, gait 없음');
+  near(travel(6000), WALK_SPEED * 6, '걷기는 6초 내내 같은 속도 (제한 없음)');
+
+  // 위조: 방향 크기를 크게 보내거나 속도 값을 끼워 넣어도 걷기 속도를 넘지 못한다
+  S.setPlayerInput(room, id, { dir: { x: 50, z: 0 }, speed: 99, run: false }, now);
+  near(travel(1000), WALK_SPEED, '위조한 큰 방향값');
+  S.setPlayerInput(room, id, { dir: { x: 1, z: 1 } }, now);
+  m.pos.x = -7.5; m.pos.z = 2;
+  const p0 = { ...m.pos };
+  for (let t = 0; t < 1000; t += TICK) { now += TICK; S.tickRoomPhysics(room, TICK, now); }
+  near(Math.hypot(m.pos.x - p0.x, m.pos.z - p0.z), WALK_SPEED, '대각선도 걷기 속도');
+  S.setPlayerInput(room, id, { dir: { x: 'abc', z: null } }, now);
+  near(travel(500), 0, '숫자가 아닌 방향은 0');
+  S.setPlayerInput(room, id, { dir: { x: 1, z: 0 } }, now);
+
+  // 뛰기: 3초 동안만 빠르고, 그 뒤로는 걷기
+  let r = S.requestGait(room, id, 'run', now);
+  assert(r.ok && r.mode === 'run' && r.activeMs === GAIT_ACTIVE_MS && r.cooldownMs.run === GAIT_COOLDOWN_MS, '뛰기 시작: 남은 3초, 끝난 뒤 쿨타임 10초');
+  const runStart = now;
+  near(travel(1000), RUN_SPEED, '뛰는 1초');
+  assert(posOf().state === 'run' && posOf().gait === 'run', '뛰는 중에는 상태 run + gait run (호스트 표시용)');
+  r = S.requestGait(room, id, 'run', now);
+  assert(!r.ok && r.reason === 'busy', '뛰는 중에 또 뛰기 요청은 거절');
+  r = S.requestGait(room, id, 'crawl', now);
+  assert(!r.ok && r.reason === 'busy' && r.mode === 'run', '뛰는 중에 기어가기 요청은 거절');
+  near(travel(2000), RUN_SPEED * 2, '뛰는 나머지 2초');
+  assert(now === runStart + GAIT_ACTIVE_MS, '시계 확인');
+  near(travel(1000), WALK_SPEED, '3초가 지나면 걷기 속도');
+  assert(posOf().state === 'walk' && posOf().gait === undefined, '뛰기가 끝나면 상태 walk');
+  // 쿨타임: 끝난 순간부터 10초
+  r = S.requestGait(room, id, 'run', now);
+  assert(!r.ok && r.reason === 'cooldown' && r.cooldownMs.run === GAIT_COOLDOWN_MS - 1000, '쿨타임 중 뛰기 요청은 거절 (남은 9초)');
+  near(travel(1000), WALK_SPEED, '거절된 뒤에도 걷기 속도');
+  // 예전 방식: move 에 run:true 를 계속 실어 보내도 쿨타임 중에는 걷기
+  const legacy = S.setPlayerInput(room, id, { dir: { x: 1, z: 0 }, run: true }, now);
+  assert(legacy && !legacy.ok && legacy.reason === 'cooldown', 'move 의 run:true 도 쿨타임 중에는 거절');
+  assert(S.setPlayerInput(room, id, { dir: { x: 1, z: 0 }, run: true }, now) === null, 'run:true 를 계속 보내는 것은 새 요청이 아님');
+  near(travel(1000), WALK_SPEED, 'run:true 를 실어 보내도 걷기 속도');
+  now = runStart + GAIT_ACTIVE_MS + GAIT_COOLDOWN_MS - 1;
+  assert(S.requestGait(room, id, 'run', now).reason === 'cooldown', '쿨타임 끝나기 1ms 전에는 거절');
+  // 뛰기 쿨타임 중에도 기어가기는 따로 쓸 수 있다
+  r = S.requestGait(room, id, 'crawl', now);
+  assert(r.ok && r.mode === 'crawl' && r.activeMs === GAIT_ACTIVE_MS, '기어가기 시작');
+  const crawlStart = now;
+  near(travel(1000), CRAWL_SPEED, '기어가는 1초');
+  assert(posOf().state === 'crawl' && posOf().gait === 'crawl', '기어가는 중에는 상태 crawl + gait crawl');
+  S.setPlayerInput(room, id, { dir: { x: 0, z: 0 } }, now);
+  S.tickRoomPhysics(room, TICK, (now += TICK));
+  assert(posOf().state === 'crawl', '멈춰 있어도 기어가기 자세');
+  S.setPlayerInput(room, id, { dir: { x: 1, z: 0 } }, now);
+  assert(S.requestGait(room, id, 'run', now).reason === 'busy', '기어가는 중에는 뛰기 거절 (쿨타임이 끝났어도)');
+  now = crawlStart + GAIT_ACTIVE_MS;
+  near(travel(1000), WALK_SPEED, '기어가기도 3초가 지나면 걷기');
+  r = S.requestGait(room, id, 'crawl', now);
+  assert(!r.ok && r.reason === 'cooldown', '기어가기 쿨타임 중 거절');
+  now = crawlStart + GAIT_ACTIVE_MS + GAIT_COOLDOWN_MS;
+  assert(S.requestGait(room, id, 'crawl', now).ok, '기어가기: 끝난 뒤 10초가 지나면 다시 가능');
+  // 일찍 끄기: 그 순간부터 쿨타임
+  now += 500;
+  r = S.requestGait(room, id, 'walk', now);
+  assert(r.ok && r.mode === null && r.cooldownMs.crawl === GAIT_COOLDOWN_MS, '일찍 끄면 그때부터 쿨타임 10초');
+  near(travel(1000), WALK_SPEED, '일찍 끈 뒤 걷기');
+  // 뛰기: 쿨타임이 끝났으니 다시 3초
+  r = S.requestGait(room, id, 'run', now);
+  assert(r.ok, '뛰기: 쿨타임이 끝나면 다시 가능');
+  const total = travel(GAIT_ACTIVE_MS + 1000);
+  near(total, RUN_SPEED * 3 + WALK_SPEED * 1, '3초 뛰고 1초 걷기 (뛰기 속도를 계속 유지할 수 없음)');
+  assert(S.requestGait(room, id, 'fly', now).reason === 'unknown', '모르는 걸음걸이는 거절');
+  assert(S.requestGait(room, 'nobody', 'run', now) === null, '없는 참가자');
+  log('gait unit checks ok (walk default, run/crawl 3s burst, 10s cooldown after burst, busy/cooldown rejection, forged input clamped)');
+}
+
+// ---------------------------------------------------------------------------
+// 뛰기·기어가기 규칙 (실제 서버 + 소켓): 넉넉한 여유를 두고 속도 구간만 비교한다.
+// ---------------------------------------------------------------------------
+async function verifyGaitRules() {
+  log('--- run / crawl burst + cooldown (server enforced) ---');
+  const gh = new Client('gait-host');
+  const gp = new Client('gait-player');
+  await Promise.all([gh.ready(), gp.ready()]);
+  gh.send('findOrCreateChurch', { name: `검증교회-걸음걸이-${Date.now()}` });
+  const church = await gh.waitFor('churchJoined');
+  gh.send('createRoom', { pin: TEST_ROOM_PIN, churchId: church.church.id, title: '걸음걸이방', capacity: 'unlimited', questionSeconds: 60 });
+  const roomId = (await gh.waitFor('roomCreated')).room.id;
+  const id = 'device-gait';
+  gp.send('joinRoom', { pin: TEST_ROOM_PIN, roomId, deviceId: id, nickname: '걸음이', avatar: 'circle-blue' });
+  await gp.waitFor('joined');
+  gh.send('startQuiz', { roomId, questionCount: 1 });
+  await gh.waitFor('roomState', (m) => m.room.status === 'question');
+
+  const RUN_MIN = (WALK_SPEED + RUN_SPEED) / 2; // 3.2: 이보다 빠르면 뛰는 중
+  const WALK_MAX = WALK_SPEED * 1.3; // 2.86: 걷기는 이보다 느려야 함
+  const WALK_MIN = (WALK_SPEED + CRAWL_SPEED) / 2; // 1.6
+
+  const walk = await measureSpeed(gh, roomId, gp, id);
+  assert(walk > WALK_MIN && walk < WALK_MAX, `기본은 걷기 속도여야 함 (${walk.toFixed(2)})`);
+
+  // 위조: 방향 크기 40배 + 속도 필드 + (뛰기를 켜지 않은 채) 큰 값
+  const forged = await measureSpeed(gh, roomId, gp, id, { dir: { x: 40, z: 0 }, extra: { speed: 99, maxSpeed: 99 } });
+  assert(forged < WALK_MAX, `위조한 고속 입력도 걷기 속도를 넘지 못해야 함 (${forged.toFixed(2)})`);
+
+  // 호스트·다른 기기는 기술을 켤 수 없다
+  gh.buffer = gh.buffer.filter((m) => m.type !== 'gait');
+  gh.send('gait', { roomId, mode: 'run' });
+  await sleep(150);
+  assert(!gh.buffer.some((m) => m.type === 'gait'), '참가자가 아닌 소켓의 gait 요청은 무시');
+
+  // 뛰기 시작
+  const started = await requestGaitOverWire(gp, roomId, 'run');
+  const startedAt = Date.now();
+  assert(started.ok && started.mode === 'run', '뛰기 요청이 받아들여져야 함');
+  assert(started.activeMs > GAIT_ACTIVE_MS - 300 && started.activeMs <= GAIT_ACTIVE_MS, '뛰기 남은 시간 약 3초');
+  assert(started.cooldownMs.run === GAIT_COOLDOWN_MS && started.durationMs === GAIT_ACTIVE_MS && started.cooldownTotalMs === GAIT_COOLDOWN_MS, '쿨타임은 끝난 뒤 10초');
+  const running = await measureSpeed(gh, roomId, gp, id, {}, 800);
+  assert(running > RUN_MIN, `뛰는 동안은 걷기보다 확실히 빨라야 함 (${running.toFixed(2)})`);
+  const during = await freshPosition(gh, roomId, id);
+  assert(during.gait === 'run', '호스트가 받는 positions 에 뛰는 중(gait: run) 표시가 있어야 함');
+  const again = await requestGaitOverWire(gp, roomId, 'run');
+  assert(!again.ok && again.reason === 'busy', '뛰는 중 두 번째 뛰기는 거절');
+
+  // 3초가 지난 뒤: run:true 를 계속 실어 보내도 걷기 속도
+  await sleep(Math.max(0, startedAt + GAIT_ACTIVE_MS + 250 - Date.now()));
+  const after = await measureSpeed(gh, roomId, gp, id, { run: true }, 800);
+  assert(after > WALK_MIN && after < WALK_MAX, `뛰기 시간이 끝나면 뛰기 속도를 유지할 수 없어야 함 (${after.toFixed(2)})`);
+  const expired = await freshPosition(gh, roomId, id);
+  assert(expired.gait === undefined, '뛰기가 끝나면 gait 표시가 없어야 함');
+  const denied = await requestGaitOverWire(gp, roomId, 'run');
+  assert(!denied.ok && denied.reason === 'cooldown' && denied.mode === null, '쿨타임 중 두 번째 뛰기는 거절');
+  assert(denied.cooldownMs.run > GAIT_COOLDOWN_MS - 4000 && denied.cooldownMs.run < GAIT_COOLDOWN_MS, '남은 쿨타임을 알려 줘야 함');
+  const stillWalk = await measureSpeed(gh, roomId, gp, id, {}, 600);
+  assert(stillWalk < WALK_MAX, `쿨타임 중에는 걷기 (${stillWalk.toFixed(2)})`);
+
+  // 기어가기: 따로 쓸 수 있고, 느리다
+  const crawl = await requestGaitOverWire(gp, roomId, 'crawl');
+  const crawlAt = Date.now();
+  assert(crawl.ok && crawl.mode === 'crawl' && crawl.cooldownMs.run > 0, '기어가기는 뛰기 쿨타임과 따로');
+  const crawling = await measureSpeed(gh, roomId, gp, id, {}, 800);
+  assert(crawling < WALK_MIN, `기어가는 동안은 걷기보다 느려야 함 (${crawling.toFixed(2)})`);
+  const crawlPos = await freshPosition(gh, roomId, id);
+  assert(crawlPos.gait === 'crawl' && crawlPos.state === 'crawl', '호스트가 받는 positions 에 기어가는 중 표시');
+  await sleep(Math.max(0, crawlAt + GAIT_ACTIVE_MS + 250 - Date.now()));
+  const afterCrawl = await measureSpeed(gh, roomId, gp, id, { crawl: true }, 600);
+  assert(afterCrawl > WALK_MIN && afterCrawl < WALK_MAX, `기어가기도 3초 뒤에는 걷기로 돌아와야 함 (${afterCrawl.toFixed(2)})`);
+  const crawlDenied = await requestGaitOverWire(gp, roomId, 'crawl');
+  assert(!crawlDenied.ok && crawlDenied.reason === 'cooldown', '기어가기 쿨타임 중 거절');
+  const status = await requestGaitOverWire(gp, roomId, 'status');
+  assert(status.mode === null && status.cooldownMs.run > 0 && status.cooldownMs.crawl > 0, '상태 조회는 남은 쿨타임을 알려 줌');
+
+  log(
+    `gait over the wire ok: walk=${walk.toFixed(2)} forged=${forged.toFixed(2)} run=${running.toFixed(2)} afterRun=${after.toFixed(2)} ` +
+      `crawl=${crawling.toFixed(2)} afterCrawl=${afterCrawl.toFixed(2)}`,
+  );
+  gp.close();
+  gh.close();
+}
+
 async function main() {
   verifyRecordsUnit();
   verifyRulesUnit();
+  verifyGaitUnit();
   log(`starting server on port ${PORT}...`);
   const server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(ROOT, 'server'),
@@ -607,11 +829,12 @@ async function main() {
     log('player sockets receive positions during a question');
 
     // m1은 입력으로 걸어서 정답 구역으로, m2는 오답 구역으로, m3는 가만히 있어서 두 구역 밖에 남음
-    await moveIntoZone(host2, roomId2, m1, 'device-m1', ZONES[correct1]);
+    await Promise.all([
+      moveIntoZone(host2, roomId2, m1, 'device-m1', ZONES[correct1]),
+      moveIntoZone(host2, roomId2, m2, 'device-m2', ZONES[wrong1]),
+    ]);
     const m1Pos = await freshPosition(host2, roomId2, 'device-m1');
     assert(inZone(m1Pos, ZONES[correct1]), 'm1이 조이스틱 입력으로 이동해서 정답 구역 안에 서 있어야 함');
-
-    await moveIntoZone(host2, roomId2, m2, 'device-m2', ZONES[wrong1]);
     const m2Pos = await freshPosition(host2, roomId2, 'device-m2');
     assert(inZone(m2Pos, ZONES[wrong1]), 'm2가 조이스틱 입력으로 이동해서 오답 구역 안에 서 있어야 함');
 
@@ -620,9 +843,12 @@ async function main() {
     log('zone entry via manual move input verified (m1 O/X correct, m2 wrong, m3 outside)');
 
     // 달리기(run) > 걷기(walk) > 기어가기(crawl) 속도 비교 (m3로 측정, x축만 이동해 구역에는 안 들어감)
-    const walkSpeed = await measureSpeed(host2, roomId2, m3, 'device-m3', {}, 700);
-    const runSpeedMeasured = await measureSpeed(host2, roomId2, m3, 'device-m3', { run: true }, 700);
-    const crawlSpeedMeasured = await measureSpeed(host2, roomId2, m3, 'device-m3', { crawl: true }, 700);
+    // (예전 방식인 move 의 run/crawl 값도 "기술 요청"으로 받아 준다. 자세한 시간·쿨타임 검사는 verifyGaitRules)
+    const walkSpeed = await measureSpeed(host2, roomId2, m3, 'device-m3', {}, 600);
+    const runSpeedMeasured = await measureSpeed(host2, roomId2, m3, 'device-m3', { run: true }, 600);
+    m3.send('gait', { roomId: roomId2, mode: 'walk' }); // 뛰기를 일찍 끝내야 기어가기를 켤 수 있다
+    const crawlSpeedMeasured = await measureSpeed(host2, roomId2, m3, 'device-m3', { crawl: true }, 600);
+    m3.send('gait', { roomId: roomId2, mode: 'walk' });
     log(
       `speeds measured: walk=${walkSpeed.toFixed(2)} run=${runSpeedMeasured.toFixed(2)} crawl=${crawlSpeedMeasured.toFixed(2)} ` +
         `(server consts walk=${WALK_SPEED} run=${RUN_SPEED} crawl=${CRAWL_SPEED})`,
@@ -1328,6 +1554,7 @@ async function main() {
     log('home-screen shop (class code + owned nickname) and separate host password with 5-try lockout ok');
 
     await verifyGuideFindings();
+    await verifyGaitRules();
 
     pinTester.close();
     dup.close();

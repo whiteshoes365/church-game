@@ -201,6 +201,22 @@ export interface PlayerPosition {
   z: number;
   y: number;
   state: MoveState;
+  gait?: Gait; // 지금 켜져 있는 기술 (걷기일 때는 없음)
+}
+
+// 뛰기·기어가기: 잠깐(durationMs) 켜지고, 끝난 뒤 cooldownTotalMs 동안 다시 쓸 수 없다.
+export type Gait = 'run' | 'crawl';
+
+/** 서버가 학생에게 보내는 'gait' 메시지. 시각이 아니라 "남은 ms" 로 온다. */
+export interface GaitStatus {
+  roomId: string;
+  ok?: boolean;
+  reason?: 'busy' | 'cooldown' | 'unknown' | null;
+  mode: Gait | null;
+  activeMs: number;
+  cooldownMs: Record<Gait, number>; // 기술이 끝난 뒤(꺼져 있으면 지금)부터 남은 쿨타임
+  durationMs: number;
+  cooldownTotalMs: number;
 }
 
 export interface RoomSnapshot {
