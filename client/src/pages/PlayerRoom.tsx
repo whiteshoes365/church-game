@@ -10,6 +10,7 @@ import type { Gait, GaitStatus, PlayerPosition, RoomSnapshot } from '../protocol
 import { PlayerMap } from '../components/PlayerMap';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 import { ShopPanel } from '../components/ShopPanel';
+import { LegalFooter } from '../components/LegalFooter';
 
 const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
@@ -463,9 +464,13 @@ export function PlayerRoom() {
             </div>
           </div>
 
+          <p className="fine-print join-privacy-note">
+            입장하면 <b>닉네임(최대 12자)</b>, <b>블록 아바타</b>, <b>기기 식별값</b>(출석·상점 아이템 확인용)만 써요. 실명·전화번호·이메일·생일은 받지 않아요. 닉네임에 실명을 쓰지 마세요.
+          </p>
           <button className="btn btn-primary" onClick={join} disabled={!nickname.trim() || pin.length !== 4}>
             입장하기
           </button>
+          <LegalFooter newTab />
         </div>
       </div>
     );

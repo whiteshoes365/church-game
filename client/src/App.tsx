@@ -10,10 +10,14 @@ import { PlayerShop } from './pages/PlayerShop';
 import { JoinByCode } from './pages/JoinByCode';
 import { DisplayRoom } from './pages/DisplayRoom';
 import { RemoteRoom } from './pages/RemoteRoom';
+import { Legal } from './pages/Legal';
+import { ServerWakeNotice } from './components/ServerWakeNotice';
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <ServerWakeNotice />
+      <Routes>
       <Route path="/" element={<PlayerJoin />} />
       <Route path="/j/:code" element={<JoinByCode />} />
       <Route path="/rooms/:churchId" element={<PlayerRooms />} />
@@ -27,7 +31,10 @@ export default function App() {
       <Route path="/display/:roomId" element={<DisplayRoom />} />
       <Route path="/remote/pair/:pairCode" element={<RemoteRoom />} />
       <Route path="/remote/:codeOrId" element={<RemoteRoom />} />
+      <Route path="/privacy" element={<Legal tab="privacy" />} />
+      <Route path="/terms" element={<Legal tab="terms" />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }

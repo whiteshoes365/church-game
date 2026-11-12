@@ -11,6 +11,8 @@ class GameSocket {
   private everOpened = false;
   private retryTimer: number | null = null;
   private watching = false;
+  /** 연결을 시도했는데 아직 열리지 않은 시각 (열려 있거나 시도한 적 없으면 null). 서버 깨우기 안내에 쓴다. */
+  waitingSince: number | null = null;
 
   connect() {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
@@ -18,7 +20,9 @@ class GameSocket {
     }
     const socket = new WebSocket(WS_URL);
     this.socket = socket;
+    if (this.waitingSince === null) this.waitingSince = Date.now();
     socket.addEventListener('open', () => {
+      this.waitingSince = null;
       // 끊겼다가 다시 붙은 경우: 먼저 방을 다시 열고(권한 확인), 그 다음에 밀린 메시지를 보낸다.
       if (this.everOpened) for (const fn of [...this.openHooks]) fn();
       this.everOpened = true;
@@ -29,6 +33,9 @@ class GameSocket {
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return;
       this.emit('socketClose');
+      // 한 번도 연결된 적이 없으면(서버가 자고 있다 깨어나는 중일 수 있음) 화면 종류와 상관없이 다시 시도한다.
+      if (!this.everOpened) this.scheduleFirstConnectRetry();
+      else if (this.openHooks.size === 0) this.waitingSince = null; // 다시 연결하지 않는 화면: 안내를 계속 띄우지 않는다
       this.scheduleRetry();
     });
     socket.addEventListener('message', (event) => {
@@ -55,6 +62,14 @@ class GameSocket {
       this.retryTimer = null;
       if (this.openHooks.size > 0) this.connect();
     }, 1200);
+  }
+
+  private scheduleFirstConnectRetry() {
+    if (this.retryTimer !== null) return;
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = null;
+      if (!this.everOpened) this.connect();
+    }, 2000);
   }
 
   get isOpen() {

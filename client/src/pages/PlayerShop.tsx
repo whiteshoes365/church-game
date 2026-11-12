@@ -4,6 +4,7 @@ import { gameSocket } from '../ws';
 import { getDeviceId } from '../deviceId';
 import { ShopPanel } from '../components/ShopPanel';
 import { DEFAULT_AVATAR_ID } from '../avatars';
+import { LegalFooter } from '../components/LegalFooter';
 
 const KEY = 'church-game:shop-login';
 
@@ -53,7 +54,13 @@ export function PlayerShop() {
     gameSocket.send('shopLogin', { code: code.trim(), nickname: nickname.trim(), deviceId });
   }
 
-  if (ready) return <ShopPanel avatarId={DEFAULT_AVATAR_ID} onClose={() => navigate('/')} />;
+  if (ready)
+    return (
+      <>
+        <ShopPanel avatarId={DEFAULT_AVATAR_ID} onClose={() => navigate('/')} />
+        <LegalFooter className="legal-footer-shop" />
+      </>
+    );
 
   return (
     <div className="screen">
@@ -85,6 +92,7 @@ export function PlayerShop() {
         <button className="link-btn" onClick={() => navigate('/')}>
           처음 화면으로
         </button>
+        <LegalFooter />
       </div>
     </div>
   );
