@@ -640,6 +640,7 @@ async function main() {
   verifyRulesUnit();
   verifyGaitUnit();
   verifyPauseUnit();
+  await verifyFloorMarks();
   log(`starting server on port ${PORT}...`);
   const server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(ROOT, 'server'),
@@ -1860,6 +1861,108 @@ function verifyPauseUnit() {
 
 // 화면 소스(개인정보 방침·학생 홈·문제은행 개수 표시)가 빠지지 않았는지 점검한다.
 // 브라우저를 띄우지 않고 라우트·문구·컴포넌트를 파일에서 확인한다.
+// 클라이언트의 순수 계산 파일(client/src/floorMarks.ts)을 그대로 불러온다 (타입만 걷어 낸다).
+async function loadClientTs(relPath) {
+  const source = fs.readFileSync(path.join(ROOT, relPath), 'utf8');
+  const esbuild = await import('esbuild');
+  const { code } = await esbuild.transform(source, { loader: 'ts', format: 'esm' });
+  return import(`data:text/javascript;base64,${Buffer.from(code, 'utf8').toString('base64')}`);
+}
+
+// 바닥 O/X 표시·표정·효과음: 구역 상수는 그대로이고, 바닥 표시가 채점 구역과 정확히 겹치는지.
+async function verifyFloorMarks() {
+  log('--- floor O/X marks / zone constants / reaction checks ---');
+  const EXPECTED_ZONES = {
+    O: { xmin: -7, xmax: -1.5, zmin: 1, zmax: 6.5 },
+    X: { xmin: 1.5, xmax: 7, zmin: 1, zmax: 6.5 },
+  };
+  const SPAWN_Z = { min: 7, max: 8.5 };
+  assert(JSON.stringify(ZONES) === JSON.stringify(EXPECTED_ZONES), `ZONES 상수가 바뀌면 안 됨: ${JSON.stringify(ZONES)}`);
+  assert(JSON.stringify(MAP_BOUNDS) === JSON.stringify({ xmin: -8, xmax: 8, zmin: -1, zmax: 9 }), 'MAP_BOUNDS 상수가 바뀌면 안 됨');
+
+  // 스폰: 항상 중립 지대 z 7~8.5, 지도 안, 두 구역 밖
+  const church = gameState.findOrCreateChurch(`바닥표시-${Date.now()}`);
+  let spawned = 0;
+  for (let r = 0; r < 12; r++) {
+    const room = gameState.createRoom({ churchId: church.id, title: `바닥표시${r}`, pin: '2468', hostPassword: 'FloorMark1' });
+    for (let i = 0; i < 5; i++) gameState.joinRoom(room, { deviceId: `floor-${r}-${i}`, nickname: `바닥${r}${i}`, avatar: 'circle-blue' });
+    for (const p of room.players.values()) {
+      const { x, z } = p.motion.pos;
+      assert(z >= SPAWN_Z.min && z <= SPAWN_Z.max, `스폰 z 는 7~8.5: ${z}`);
+      assert(x >= MAP_BOUNDS.xmin && x <= MAP_BOUNDS.xmax, `스폰 x 는 지도 안: ${x}`);
+      assert(!inZone({ x, z }, ZONES.O) && !inZone({ x, z }, ZONES.X), '스폰 자리는 O/X 구역 밖');
+      spawned += 1;
+    }
+  }
+  assert(spawned === 60, `스폰 검사 인원 (${spawned}명)`);
+
+  // 바닥 타일: 서버 구역 사각형을 빈틈없이, 넘치지 않게 덮는다
+  const floor = await loadClientTs('client/src/floorMarks.ts');
+  const EPS = 1e-9;
+  for (const key of ['O', 'X']) {
+    const box = ZONES[key];
+    const other = ZONES[key === 'O' ? 'X' : 'O'];
+    const tiles = floor.floorTiles(key, box);
+    assert(tiles.length === floor.FLOOR_GRID * floor.FLOOR_GRID, `${key} 바닥 칸 수`);
+    let area = 0;
+    let xmin = Infinity, xmax = -Infinity, zmin = Infinity, zmax = -Infinity;
+    for (const t of tiles) {
+      const x0 = t.x - t.w / 2, x1 = t.x + t.w / 2, z0 = t.z - t.d / 2, z1 = t.z + t.d / 2;
+      assert(x0 >= box.xmin - EPS && x1 <= box.xmax + EPS && z0 >= box.zmin - EPS && z1 <= box.zmax + EPS, `${key} 바닥 칸이 채점 구역 밖으로 나가면 안 됨 (${t.col},${t.row})`);
+      assert(z1 <= SPAWN_Z.min - 0.4, `${key} 바닥 칸이 스폰 지대(z 7~8.5)로 넘치면 안 됨`);
+      assert(x1 <= other.xmin + EPS || x0 >= other.xmax - EPS, `${key} 바닥 칸이 반대 구역과 겹치면 안 됨`);
+      assert(Math.abs(t.x) - t.w / 2 >= 1.5 - EPS, `${key} 바닥 칸이 가운데 담 쪽 간격(x -1.5~1.5)으로 넘치면 안 됨`);
+      // 칸 중심에 서 있으면 서버도 그 구역으로 채점해야 한다
+      assert(inZone({ x: t.x, z: t.z }, box) && !inZone({ x: t.x, z: t.z }, other), `${key} 바닥 칸 위 = ${key} 채점`);
+      area += t.w * t.d;
+      xmin = Math.min(xmin, x0); xmax = Math.max(xmax, x1); zmin = Math.min(zmin, z0); zmax = Math.max(zmax, z1);
+    }
+    const boxArea = (box.xmax - box.xmin) * (box.zmax - box.zmin);
+    assert(Math.abs(area - boxArea) < 1e-6, `${key} 바닥 넓이 = 채점 구역 넓이 (${area} vs ${boxArea})`);
+    assert(Math.abs(xmin - box.xmin) < EPS && Math.abs(xmax - box.xmax) < EPS && Math.abs(zmin - box.zmin) < EPS && Math.abs(zmax - box.zmax) < EPS, `${key} 바닥 범위 = 채점 구역 범위`);
+    const letters = tiles.filter((t) => t.letter);
+    assert(letters.length >= 20 && letters.length < tiles.length / 2, `${key} 글자 칸이 크게 그려져야 함 (${letters.length}칸)`);
+    // 글자는 좌우·앞뒤 대칭이라 어느 쪽에서 봐도 같은 글자
+    const n = floor.FLOOR_GRID - 1;
+    for (const t of tiles) {
+      assert(floor.isLetterCell(key, n - t.col, t.row) === t.letter && floor.isLetterCell(key, t.col, n - t.row) === t.letter, `${key} 글자 모양은 대칭`);
+    }
+  }
+  const mid = (floor.FLOOR_GRID - 1) / 2;
+  assert(floor.isLetterCell('X', mid, mid) === true && floor.isLetterCell('O', mid, mid) === false, 'X 는 가운데가 차 있고 O 는 가운데가 비어 있음');
+
+  // 화면 소스: 바닥 표시는 서버가 보낸 zones 로 그리고, 구역 기본값은 서버 상수와 같아야 한다
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const zoneLiteral = 'O: { xmin: -7, xmax: -1.5, zmin: 1, zmax: 6.5 },\n  X: { xmin: 1.5, xmax: 7, zmin: 1, zmax: 6.5 },';
+  const scene = read('client/src/three/HostScene3D.tsx');
+  const playerMap = read('client/src/components/PlayerMap.tsx');
+  assert(scene.includes(zoneLiteral) && playerMap.includes(zoneLiteral), '화면의 구역 기본값은 서버 ZONES 와 같아야 함');
+  assert(/<FloorMark shape=\{key\} box=\{zones\[key\]\}/.test(scene), '3D 무대 바닥 표시는 zones 사각형으로 그려야 함');
+  assert(read('client/src/three/FloorMarks.tsx').includes('floorTiles(shape, box)'), '3D 바닥 타일은 floorMarks 계산을 써야 함');
+  assert(playerMap.includes('<FloorDecal shape={key} />') && playerMap.includes('left: px(z.xmin)') && playerMap.includes('top: pz(z.zmin)'), '학생 2D 지도도 같은 구역에 바닥 표시를 깔아야 함');
+  const stage = read('client/src/components/RoomStage.tsx');
+  assert(stage.includes('<FloorDecal shape={key} />') && stage.includes('room.zones'), '2D 대체 화면도 서버 구역에 바닥 표시를 깔아야 함');
+
+  // 표정·반응
+  const character = read('client/src/three/VoxelCharacter.tsx');
+  assert(/type Expression = 'neutral' \| 'happy' \| 'sad'/.test(character), '표정은 기본·웃음·실망 세 가지');
+  assert(character.includes("reveal === 'correct' ? 'happy' : reveal === 'wrong' ? 'sad' : 'neutral'"), '정답이면 웃음, 오답이면 실망, 평소에는 기본 표정');
+  const reactionSeconds = Number(/REACTION_SECONDS = ([\d.]+)/.exec(character)?.[1]);
+  assert(reactionSeconds >= 2 && reactionSeconds <= 3, `반응 동작은 2~3초 (${reactionSeconds})`);
+  assert(read('client/src/three/ResultCanvas3D.tsx').includes('celebrate={column.winner}'), '시상대 우승 캐릭터는 환호 자세');
+  const effects = read('client/src/three/RevealEffects.tsx');
+  assert(effects.includes('instancedMesh') && /MAX_SPARKS = \d+/.test(effects), '이펙트는 인스턴스 메시 하나 + 개수 상한');
+
+  // 효과음: 직접 합성, 배경 음악 설정(끄기·0)을 따른다
+  const musicSrc = read('client/src/music.ts');
+  assert(/canPlaySfx\(\): boolean \{\s*return this\.active && this\.prefs\.enabled && this\.prefs\.volume > 0/.test(musicSrc), '효과음은 음악이 꺼져 있거나 소리 크기가 0 이면 나지 않아야 함');
+  assert(/playSfx\([^)]*\): boolean \{\s*if \(!this\.canPlaySfx\(\)\) return false;/.test(musicSrc), 'playSfx 는 먼저 음악 설정을 확인해야 함');
+  assert(!/new Audio\(|\.(mp3|wav|ogg|m4a)\b|fetch\(|decodeAudioData/.test(musicSrc), '효과음·음악은 외부 음원 파일 없이 합성해야 함');
+  const clientFiles = fs.readdirSync(path.join(ROOT, 'client'), { recursive: true }).filter((f) => !String(f).includes('node_modules') && !String(f).startsWith('dist'));
+  assert(!clientFiles.some((f) => /\.(mp3|wav|ogg|m4a|glb|gltf|fbx)$/i.test(String(f))), '클라이언트에 외부 음원·3D 에셋 파일이 없어야 함');
+  log('zone constants, spawn z 7~8.5, floor tiles == scoring zones (3D + 2D), expressions, synthesized sfx gating ok');
+}
+
 async function verifyClientScreens() {
   log('--- privacy / home / question-bank screen checks ---');
   const app = fs.readFileSync(path.join(ROOT, 'client/src/App.tsx'), 'utf8');
