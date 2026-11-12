@@ -9,6 +9,9 @@
 
 export type TrackId = 'upbeat' | 'calm' | 'countdown' | 'chiptune' | 'march' | 'musicbox';
 
+/** 정답 공개 효과음 종류 (직접 합성). */
+export type SfxKind = 'cheer' | 'aww';
+
 export interface MusicPrefs {
   track: TrackId;
   enabled: boolean; // false = 음악 끄기
@@ -592,6 +595,73 @@ class MusicPlayer {
     osc.stop(at + 0.07);
   }
 
+  // ---- 효과음 (정답 공개 반응) ----
+  // 배경 음악과 같은 master 를 거치므로 소리 크기 설정을 그대로 따른다.
+  // 음악이 꺼져 있거나(끄기), 소리 크기가 0 이거나, 이 기기가 소리를 내는 화면이 아니면 나지 않는다.
+  // 음원은 전부 여기서 Web Audio 로 직접 합성한다 (외부 파일 없음).
+  private sfxCount = 0;
+
+  /** 지금 효과음을 낼 수 있는 상태인지 (배경 음악 설정을 따른다). */
+  canPlaySfx(): boolean {
+    return this.active && this.prefs.enabled && this.prefs.volume > 0 && !!this.ctx && !!this.master && this.ctx.state === 'running';
+  }
+
+  /** cheer = 짧은 환호(올라가는 팡파르 + 반짝이), aww = 짧은 아쉬움(내려가는 소리). */
+  playSfx(kind: SfxKind, delayS = 0): boolean {
+    if (!this.canPlaySfx()) return false;
+    const ctx = this.ctx!;
+    const at = ctx.currentTime + 0.03 + Math.max(0, delayS);
+    if (kind === 'cheer') {
+      // 도-미-솔-도 로 뛰어오르는 짧은 팡파르
+      const notes: [number, number, number][] = [
+        [523.25, 0, 0.09],
+        [659.25, 0.09, 0.09],
+        [783.99, 0.18, 0.09],
+        [1046.5, 0.27, 0.3],
+      ];
+      for (const [freq, offset, dur] of notes) {
+        this.sfxTone('square', freq, freq, at + offset, dur, 0.16, 2600);
+        this.sfxTone('triangle', freq * 2, freq * 2, at + offset, dur, 0.1);
+      }
+      // 반짝이: 높은 음 두 번 + 짧은 박수 같은 잡음
+      this.sfxTone('sine', 2093, 2093, at + 0.4, 0.12, 0.1);
+      this.sfxTone('sine', 2637, 2637, at + 0.5, 0.18, 0.09);
+      this.noiseHit(at + 0.27, 0.12, 5000, 0.22);
+    } else {
+      // "으응…" 하고 미끄러져 내려가는 두 음
+      this.sfxTone('triangle', 392, 349.23, at, 0.2, 0.26, 1400);
+      this.sfxTone('triangle', 311.13, 233.08, at + 0.22, 0.42, 0.26, 1200);
+      this.sfxTone('sine', 155.56, 116.54, at + 0.22, 0.42, 0.16);
+    }
+    this.sfxCount += 1;
+    return true;
+  }
+
+  private sfxTone(wave: OscillatorType, from: number, to: number, at: number, dur: number, level: number, lowpass?: number) {
+    const ctx = this.ctx!;
+    const osc = ctx.createOscillator();
+    const env = ctx.createGain();
+    osc.type = wave;
+    osc.frequency.setValueAtTime(from, at);
+    if (to !== from) osc.frequency.exponentialRampToValueAtTime(to, at + dur);
+    env.gain.setValueAtTime(0.0001, at);
+    env.gain.linearRampToValueAtTime(level, at + 0.012);
+    env.gain.linearRampToValueAtTime(level * 0.7, at + dur * 0.7);
+    env.gain.exponentialRampToValueAtTime(0.0001, at + dur + 0.06);
+    osc.connect(env);
+    if (lowpass) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = lowpass;
+      env.connect(filter);
+      filter.connect(this.master!);
+    } else {
+      env.connect(this.master!);
+    }
+    osc.start(at);
+    osc.stop(at + dur + 0.1);
+  }
+
   /** 검사용: 지금 실제로 소리를 예약하고 있는지. */
   debug() {
     return {
@@ -600,6 +670,7 @@ class MusicPlayer {
       step: this.step,
       masterGain: this.master?.gain.value ?? 0,
       timerOn: this.timer !== null,
+      sfxCount: this.sfxCount,
     };
   }
 }
