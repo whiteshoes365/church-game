@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
+import { QuestionReportButton } from '../components/QuestionReport';
 import { getDeviceId } from '../deviceId';
 import { BODY_COLORS, DEFAULT_AVATAR_CONFIG, HATS, SKIN_TONES, encodeAvatar, type AvatarConfig } from '../avatars';
 import { AvatarIcon } from '../components/AvatarIcon';
@@ -465,7 +466,7 @@ export function PlayerRoom() {
           </div>
 
           <p className="fine-print join-privacy-note">
-            입장하면 <b>닉네임(최대 12자)</b>, <b>블록 아바타</b>, <b>기기 식별값</b>(출석·상점 아이템 확인용)만 써요. 실명·전화번호·이메일·생일은 받지 않아요. 닉네임에 실명을 쓰지 마세요.
+            입장하면 <b>닉네임(최대 12자)</b>, <b>블록 아바타</b>, <b>기기 식별값</b>(출석·상점 아이템 확인용, 문제 신고 때는 변환한 값만)만 써요. 실명·전화번호·이메일·생일은 받지 않아요. 닉네임에 실명을 쓰지 마세요. 문제를 신고하면 사유와 짧은 메모만 남고, 닉네임은 남기지 않아요.
           </p>
           <button className="btn btn-primary" onClick={join} disabled={!nickname.trim() || pin.length !== 4}>
             입장하기
@@ -599,6 +600,14 @@ export function PlayerRoom() {
             )}
             <p>내 점수: {me?.score ?? 0}점</p>
             <p className="subtitle">선생님이 다음 문제를 준비하고 있어요.</p>
+            {room.question && room.question.text && (
+              <QuestionReportButton
+                roomId={room.id}
+                questionIndex={room.question.index}
+                questionText={room.question.text}
+                variant="student"
+              />
+            )}
           </div>
         )}
 

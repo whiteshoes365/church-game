@@ -257,6 +257,7 @@ export interface RoomSnapshot {
   questionDurationMs?: number;
   question: QuestionSnapshot | null;
   lastResult: LastResult | null;
+  prevQuestion?: { index: number; text: string } | null; // 진행자·리모컨만: 직전 문제 (신고용)
   groupCode?: string | null;
   team?: TeamState;
   finalResult?: FinalResult | null;
