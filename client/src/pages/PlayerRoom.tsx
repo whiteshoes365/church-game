@@ -589,6 +589,7 @@ export function PlayerRoom() {
               positions={positions}
               meId={deviceId}
               correctAnswer={room.lastResult.correctAnswer}
+              correctPlayerIds={room.lastResult.correctPlayerIds}
             />
             {room.lastResult.explanation && <p className="explanation-text">{room.lastResult.explanation}</p>}
             {me && (

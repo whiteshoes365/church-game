@@ -5,6 +5,8 @@ import { Terrain } from './Terrain';
 import { LetterStructure, type RevealState } from './LetterStructure';
 import { Clouds } from './Clouds';
 import { NAME_TAG_DISTANCE_FACTOR, VoxelCharacter, nameTagHeight } from './VoxelCharacter';
+import { FloorMark } from './FloorMarks';
+import { RevealEffects } from './RevealEffects';
 import type { PlayerPosition, PlayerSnapshot, Rect, RoomStatus, Zones } from '../protocol';
 
 // Fallback zones, identical to the server defaults, used only until the
@@ -110,6 +112,11 @@ function CameraRig() {
 const POPUP_Z_RANGE: [number, number] = [16777290, 16777280]; // 이름표(기본 범위)보다 항상 위
 const POPUP_LIFT = 0.95; // 겹치는 이웃보다 한 단 위
 const POPUP_NEAR_XZ = 1.35; // 이 거리 안이면 같은 무더기로 보고 위아래로 엇갈린다
+const POPUP_GAP = 0.95; // 이름표 위로 띄우는 간격. 환호 점프(0.3)로 이름표가 올라와도 닿지 않는다
+const HEAD_WORLD_Y = CHARACTER_SCALE * (nameTagHeight(false) - 0.6); // 머리 높이 (무대 좌표)
+// 뒤쪽 입체 글자는 작은 간판으로만 남긴다 (바닥 O/X 가 주 표시)
+const SIGN_SCALE = 0.55;
+const SIGN_Z = -1.15;
 
 /** 가까이 모인 점수 표시를 위아래로 엇갈리게 둔다 (앞줄·왼쪽부터 낮은 단). */
 export function layoutPopupLifts(items: { id: string; x: number; z: number }[]): Map<string, number> {
@@ -209,8 +216,16 @@ export function HostScene3D({ players, status, correctAnswer, correctPlayerIds, 
       <CenterDivider />
       <Clouds />
 
-      <LetterStructure shape="O" origin={[zoneCenterX(zones.O), 0, -1.2]} reveal={revealing ? (correctAnswer === 'O' ? 'correct' : 'wrong') : 'idle'} />
-      <LetterStructure shape="X" origin={[zoneCenterX(zones.X), 0, -1.2]} reveal={revealing ? (correctAnswer === 'X' ? 'correct' : 'wrong') : 'idle'} />
+      {/* 바닥 O/X: 서버 채점 구역(zones) 사각형과 똑같은 자리·크기 */}
+      {(['O', 'X'] as const).map((key) => {
+        const zoneReveal: RevealState = revealing ? (correctAnswer === key ? 'correct' : 'wrong') : 'idle';
+        return (
+          <group key={key}>
+            <FloorMark shape={key} box={zones[key]} reveal={zoneReveal} />
+            <LetterStructure shape={key} origin={[zoneCenterX(zones[key]), 0, SIGN_Z]} scale={SIGN_SCALE} reveal={zoneReveal} />
+          </group>
+        );
+      })}
 
       {players.map((p, index) => {
         const { x, y, z } = spots[index];
@@ -235,6 +250,19 @@ export function HostScene3D({ players, status, correctAnswer, correctPlayerIds, 
         );
       })}
 
+      {revealing && (
+        <RevealEffects
+          key={`fx-${correctAnswer}-${(correctPlayerIds ?? []).join(',')}`}
+          headY={HEAD_WORLD_Y}
+          targets={players.map((p, index) => ({
+            id: p.id,
+            x: spots[index].x,
+            z: spots[index].z,
+            correct: correctPlayerIds ? correctPlayerIds.includes(p.id) : p.side === correctAnswer,
+          }))}
+        />
+      )}
+
       {revealing &&
         (() => {
           const popupLifts = layoutPopupLifts(players.map((p, index) => ({ id: p.id, x: spots[index].x, z: spots[index].z })));
@@ -246,7 +274,7 @@ export function HostScene3D({ players, status, correctAnswer, correctPlayerIds, 
             return (
               <ScorePopup
                 key={`popup-${p.id}`}
-                position={[x, CHARACTER_SCALE * (nameTagHeight(!!p.cosmetics?.hat, nameLift) + 0.75 + popLift), z]}
+                position={[x, CHARACTER_SCALE * (nameTagHeight(!!p.cosmetics?.hat, nameLift) + POPUP_GAP + popLift), z]}
                 correct={isCorrect}
                 points={POINTS_PER_CORRECT}
                 delayMs={(popupLifts.get(p.id) ?? index % 4) * 70}
