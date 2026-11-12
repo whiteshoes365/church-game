@@ -151,7 +151,7 @@ function Rig({ span, top }: { span: number; top: number }) {
   return null;
 }
 
-export default function ResultCanvas3D({ columns }: { columns: ResultColumn[] }) {
+export default function ResultCanvas3D({ columns, onReady }: { columns: ResultColumn[]; onReady?: () => void }) {
   const widths = columns.map((c) => columnFootprint(c.members.length).width);
   const gap = 1.4;
   const span = widths.reduce((s, w) => s + w, 0) + gap * Math.max(0, columns.length - 1);
@@ -162,9 +162,35 @@ export default function ResultCanvas3D({ columns }: { columns: ResultColumn[] })
     return x;
   });
   const top = Math.max(1, ...columns.map((c) => c.height)) + 2.4;
+  const readyOnce = useRef(false);
+  const empty = columns.length === 0;
+
+  useEffect(() => {
+    readyOnce.current = false;
+  }, [columns]);
+
+  useEffect(() => {
+    if (!empty) return;
+    const id = requestAnimationFrame(() => onReady?.());
+    return () => cancelAnimationFrame(id);
+  }, [empty, onReady]);
+
+  function markReady() {
+    if (readyOnce.current) return;
+    readyOnce.current = true;
+    // 첫 프레임이 그려진 뒤에 보여 줘서 파란 빈 칸 깜빡임을 줄인다.
+    requestAnimationFrame(() => onReady?.());
+  }
+
+  if (empty) return <div className="result-canvas-empty" />;
 
   return (
-    <Canvas shadows dpr={[1, 1.75]} camera={{ position: [0, 6, 14], fov: 42, near: 0.1, far: 80 }}>
+    <Canvas
+      shadows
+      dpr={[1, 1.75]}
+      camera={{ position: [0, 6, 14], fov: 42, near: 0.1, far: 80 }}
+      onCreated={() => markReady()}
+    >
       <color attach="background" args={['#bfe3f0']} />
       <fog attach="fog" args={['#bfe3f0', 26, 48]} />
       <Suspense fallback={null}>

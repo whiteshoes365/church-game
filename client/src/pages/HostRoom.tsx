@@ -1,77 +1,24 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { gameSocket } from '../ws';
-import { AvatarIcon } from '../components/AvatarIcon';
-import { isWebGLAvailable } from '../three/webgl';
-import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
-import type { ResultColumn } from '../three/ResultCanvas3D';
+import type { PlayerSnapshot, RoomSnapshot, PlayerPosition } from '../protocol';
 import { loadGroupSession, normalizeGroupCode, saveGroupSession } from '../groupSession';
-import { getHostKey } from '../hostKeys';
+import { controlKeys, hostCredentials } from '../hostKeys';
 import { LEVEL_CLASS, LEVEL_LABELS } from '../levels';
-import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
-import { FitText } from '../components/FitText';
 import { MusicPicker } from '../components/MusicPicker';
-import { music } from '../music';
-
-const HostCanvas3D = lazy(() => import('../three/HostCanvas3D'));
-const ResultCanvas3D = lazy(() => import('../three/ResultCanvas3D'));
-
-const RANK_COLORS = ['#f5c518', '#b8c2cc', '#c9803a'];
-
-// 게임이 끝났을 때 3D 결과 무대에 세울 단상들.
-// 팀 대결이면 팀별 단상(이긴 팀이 가장 높게), 아니면 1·2·3등 단상.
-function buildResultColumns(room: RoomSnapshot): ResultColumn[] {
-  const final = room.finalResult;
-  if (final?.team) {
-    const order = [...final.team.teams].sort((a, b) => b.average - a.average);
-    const cols = final.team.teams.map((t) => {
-      const place = order.filter((o) => o.average > t.average).length; // 0 = 우승
-      return {
-        id: t.id,
-        color: t.color,
-        height: Math.max(1, 3 - place),
-        winner: final.team!.winnerTeamIds.includes(t.id),
-        // 결과 카드의 합계·평균을 낸 바로 그 팀원들 (끝난 뒤 팀을 다시 섞어도 결과는 그대로)
-        members: room.players.filter((p) => (t.memberIds ? t.memberIds.includes(p.id) : p.teamId === t.id)).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, cosmetics: p.cosmetics })),
-      };
-    });
-    return cols;
-  }
-  const scores = [...new Set(room.players.map((p) => p.score))].sort((a, b) => b - a).slice(0, 3);
-  const cols = scores.map((score, i) => ({
-    id: `rank-${i}`,
-    color: RANK_COLORS[i],
-    height: 3 - i,
-    winner: i === 0 && score > 0,
-    members: room.players.filter((p) => p.score === score).slice(0, 12).map((p) => ({ id: p.id, nickname: p.nickname, avatar: p.avatar, cosmetics: p.cosmetics })),
-  }));
-  // 시상대처럼 2등 - 1등 - 3등 순서로 세운다.
-  if (cols.length >= 2) return [cols[1], cols[0], ...cols.slice(2)];
-  return cols;
-}
-
-const QUESTION_DURATION_MS = 15000;
-
-const MAP_CLASS: Record<string, string> = {
-  sanctuary: 'map-sanctuary',
-  playground: 'map-playground',
-  forest: 'map-forest',
-};
-
-function hashUnit(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) h = (h * 31 + input.charCodeAt(i)) >>> 0;
-  return (h % 10000) / 10000;
-}
-
-function positionFor(player: PlayerSnapshot): { left: string; top: string } {
-  const hx = hashUnit(player.id + ':x');
-  const hy = hashUnit(player.id + ':y');
-  const top = `${20 + hy * 60}%`;
-  if (player.side === 'O') return { left: `${7 + hx * 36}%`, top };
-  if (player.side === 'X') return { left: `${57 + hx * 36}%`, top };
-  return { left: `${5 + hx * 90}%`, top };
-}
+import { QrCode } from '../components/QrCode';
+import {
+  PinDigits,
+  QuestionBanners,
+  ResultHud,
+  ResultTeams,
+  RoomStage,
+  ScoreList,
+  TeamBoard,
+} from '../components/RoomStage';
+import { displayUrl, joinQrUrl, joinTextUrl, remoteUrl } from '../joinLink';
+import { useQuestionClock } from '../roomTime';
+import { useRoomMusic } from '../useRoomMusic';
 
 export function HostRoom() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -79,23 +26,40 @@ export function HostRoom() {
   const [room, setRoom] = useState<RoomSnapshot | null>(null);
   const [positions, setPositions] = useState<Record<string, PlayerPosition>>({});
   const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
   const [linkCode, setLinkCode] = useState(() => loadGroupSession()?.code ?? '');
   const [linkPin, setLinkPin] = useState(() => loadGroupSession()?.pin ?? '');
   const [needHostPin, setNeedHostPin] = useState<string | null>(null);
   const [hostPin, setHostPin] = useState('');
   const [showHostPw, setShowHostPw] = useState(false);
   const [newHostPw, setNewHostPw] = useState('');
-  const webglAvailable = useMemo(() => isWebGLAvailable(), []);
+  const [pairCode, setPairCode] = useState('');
+  const [copied, setCopied] = useState<string | null>(null);
+  const now = useQuestionClock(room);
+
+  // 송출 PC가 붙어 있으면 소리는 송출에서만, 없으면 이 진행자 PC에서.
+  const playHere = !!room && (room.displayCount ?? 0) === 0;
+  useRoomMusic(room, { play: playHere, publish: true });
 
   useEffect(() => {
+    if (!roomId) return;
     gameSocket.connect();
-    gameSocket.send('hostOpenRoom', { roomId, hostKey: roomId ? getHostKey(roomId) : undefined });
+    const open = (password?: string) => {
+      gameSocket.send('hostOpenRoom', {
+        roomId,
+        ...hostCredentials(roomId),
+        ...(password ? { hostPassword: password } : {}),
+      });
+    };
+    open();
+    const offReconnect = gameSocket.onReconnect(() => open());
     const offAuth = gameSocket.on('hostAuthRequired', (msg) => {
       if (msg.roomId === roomId) setNeedHostPin(msg.message);
     });
     const offState = gameSocket.on('roomState', (msg) => {
-      if (msg.room.id === roomId) setRoom(msg.room);
+      if (msg.room.id !== roomId) return;
+      setRoom(msg.room);
+      setNeedHostPin(null);
+      if (msg.room.controlKey) controlKeys.save(roomId, msg.room.controlKey);
     });
     const offError = gameSocket.on('error', (msg) => {
       setError(msg.message);
@@ -109,27 +73,19 @@ export function HostRoom() {
         return next;
       });
     });
+    const offLinked = gameSocket.on('displayLinked', () => {
+      setPairCode('');
+      setError(null);
+    });
     return () => {
+      offReconnect();
       offState();
       offError();
       offPositions();
       offAuth();
+      offLinked();
     };
   }, [roomId]);
-
-  useEffect(() => {
-    if (room?.status !== 'question') return;
-    const id = setInterval(() => setNow(Date.now()), 150);
-    return () => clearInterval(id);
-  }, [room?.status]);
-
-  // 배경 음악: 진행자 화면이 열려 있는 동안만 이 기기에서 난다 (저장해 둔 곡·소리 크기 그대로).
-  const roomLoaded = !!room;
-  useEffect(() => {
-    if (!roomLoaded) return;
-    music.start();
-    return () => music.stop();
-  }, [roomLoaded]);
 
   if (!room) {
     return (
@@ -141,7 +97,9 @@ export function HostRoom() {
                 <span className="title-block block-blue" aria-hidden />
                 진행자 확인
               </h2>
-              <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>{needHostPin}</p>
+              <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>
+                {needHostPin}
+              </p>
               <p className="picker-label">진행자 비밀번호 (선생님만, 영문·숫자 4~12자)</p>
               <input
                 className="input host-pw-input"
@@ -151,9 +109,17 @@ export function HostRoom() {
                 maxLength={12}
                 value={hostPin}
                 onChange={(e) => setHostPin(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
-                onKeyDown={(e) => e.key === 'Enter' && hostPin.length >= 4 && gameSocket.send('hostOpenRoom', { roomId, hostPassword: hostPin })}
+                onKeyDown={(e) =>
+                  e.key === 'Enter' &&
+                  hostPin.length >= 4 &&
+                  gameSocket.send('hostOpenRoom', { roomId, hostPassword: hostPin })
+                }
               />
-              <button className="btn btn-primary" disabled={hostPin.length < 4} onClick={() => gameSocket.send('hostOpenRoom', { roomId, hostPassword: hostPin })}>
+              <button
+                className="btn btn-primary"
+                disabled={hostPin.length < 4}
+                onClick={() => gameSocket.send('hostOpenRoom', { roomId, hostPassword: hostPin })}
+              >
                 진행자 화면 열기
               </button>
               <p className="fine-print">방 PIN(학생용, 숫자 4자리)으로는 열 수 없어요. 5번 틀리면 이 기기에서 30초 동안 잠겨요.</p>
@@ -170,19 +136,13 @@ export function HostRoom() {
     );
   }
 
-  const sorted = [...room.players].sort((a, b) => b.score - a.score);
   const team = room.team?.enabled ? room.team : null;
-  const teamById = new Map((team?.teams ?? []).map((t) => [t.id, t]));
   const canSetup = room.status === 'lobby' || room.status === 'finished';
   const final = room.status === 'finished' ? room.finalResult ?? null : null;
-  const resultColumns = final ? buildResultColumns(room) : [];
-  const mvpNames = final ? room.players.filter((p) => final.mvpIds.includes(p.id)).map((p) => p.nickname) : [];
-  const winners = final?.team ? final.team.teams.filter((t) => final.team!.winnerTeamIds.includes(t.id)) : [];
-  const awardById = new Map((final?.awards ?? []).map((a) => [a.id, a]));
-  const maxAvg = Math.max(1, ...(team?.teams ?? []).map((t) => t.average));
-  // 팀 점수(합계·평균)는 게임 중에만 옆 칸에 보여 준다. 끝난 뒤에는 결과 카드가
-  // 그 판의 점수를 보여 주고, 옆 칸은 다음 판을 위한 팀 편성(인원)만 보여 준다.
-  const showTeamScore = room.status === 'question' || room.status === 'reveal';
+  const qrUrl = joinQrUrl(room);
+  const textUrl = joinTextUrl(room);
+  const remUrl = remoteUrl(room);
+  const paused = !!room.question?.paused;
 
   function linkGroup() {
     const code = normalizeGroupCode(linkCode);
@@ -201,6 +161,24 @@ export function HostRoom() {
     gameSocket.send('assignTeam', { roomId, playerId: p.id, teamId: next });
   }
 
+  async function copyText(label: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(label);
+      setTimeout(() => setCopied((c) => (c === label ? null : c)), 2000);
+    } catch {
+      setError('복사에 실패했어요. 주소를 길게 눌러 복사해 주세요.');
+    }
+  }
+
+  function pairDisplay() {
+    if (!/^\d{6}$/.test(pairCode)) {
+      setError('PC 송출 화면의 숫자 6자리를 입력해 주세요.');
+      return;
+    }
+    gameSocket.send('pairDisplay', { roomId, code: pairCode });
+  }
+
   return (
     <div className="host-screen host-room-screen">
       <div className="host-header">
@@ -208,12 +186,14 @@ export function HostRoom() {
           <h1 className="title" style={{ textAlign: 'left' }}>
             {room.title}
           </h1>
-          <p className="subtitle" style={{ textAlign: 'left', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <p className="subtitle" style={{ textAlign: 'left', margin: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             참여 인원 {room.players.length}명
             <span className={`badge badge-level ${LEVEL_CLASS[room.level]}`}>{LEVEL_LABELS[room.level]}</span>
             {team && <span className="badge badge-team">팀 대결</span>}
             {room.groupCode && <span className="badge badge-group">{room.groupCode} 반 기록 중</span>}
             {room.pin && room.status !== 'lobby' && <span className="badge badge-pin">방 PIN {room.pin}</span>}
+            {(room.displayCount ?? 0) > 0 && <span className="badge">송출 {room.displayCount}</span>}
+            {(room.remoteCount ?? 0) > 0 && <span className="badge">리모컨 {room.remoteCount}</span>}
           </p>
         </div>
         <div className="row host-header-actions">
@@ -224,13 +204,23 @@ export function HostRoom() {
             </button>
           )}
           {room.status === 'question' && (
-            <button className="btn btn-sm" onClick={() => gameSocket.send('reveal', { roomId })}>
-              바로 정답 공개
-            </button>
+            <>
+              <button className="btn btn-sm" onClick={() => gameSocket.send('pause', { roomId, paused: !paused })}>
+                {paused ? '재개' : '일시정지'}
+              </button>
+              <button className="btn btn-sm" onClick={() => gameSocket.send('reveal', { roomId })}>
+                바로 정답 공개
+              </button>
+            </>
           )}
           {room.status === 'reveal' && (
             <button className="btn btn-primary btn-sm" onClick={() => gameSocket.send('nextQuestion', { roomId })}>
               다음 문제
+            </button>
+          )}
+          {!canSetup && (
+            <button className="btn btn-sm" onClick={() => gameSocket.send('endQuiz', { roomId })}>
+              결과로
             </button>
           )}
           {room.groupCode && (
@@ -246,76 +236,11 @@ export function HostRoom() {
 
       {error && <p className="form-error form-error-banner">{error}</p>}
 
-      {/* 문제·정답은 화면 위쪽 전체 폭 띠에 아주 크게 (3D 무대를 가리지 않게 무대 밖에 둔다) */}
-      {room.status === 'question' && room.question && (
-        <div className="question-banner">
-          <div className="question-banner-meta">
-            <span className="badge">
-              문제 {room.question.index + 1} / {room.question.total}
-            </span>
-            {room.question.category && (
-              <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>{CATEGORY_LABELS[room.question.category]}</span>
-            )}
-            <div className="timer-bar">
-              <div
-                className="timer-bar-fill"
-                style={{
-                  width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / (room.questionDurationMs ?? QUESTION_DURATION_MS)) * 100))}%`,
-                }}
-              />
-            </div>
-          </div>
-          <FitText className="question-banner-text" text={room.question.text ?? ''} maxHeightRatio={0.34} minPx={30} />
-        </div>
-      )}
-
-      {room.status === 'reveal' && room.lastResult && (
-        <div className="question-banner reveal">
-          <div className={`answer-block ${room.lastResult.correctAnswer === 'O' ? 'o' : 'x'}`}>
-            <small>정답</small>
-            <b>{room.lastResult.correctAnswer}</b>
-          </div>
-          <div className="question-banner-body">
-            <FitText className="question-banner-text" text={room.lastResult.questionText} maxHeightRatio={0.27} minPx={30} />
-            {(room.lastResult.explanation || room.lastResult.category) && (
-              <p className="question-banner-explanation">
-                {room.lastResult.category && (
-                  <span className={`badge badge-category ${CATEGORY_CLASS[room.lastResult.category]}`}>{CATEGORY_LABELS[room.lastResult.category]}</span>
-                )}
-                {room.lastResult.explanation}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
+      <QuestionBanners room={room} now={now} />
 
       <div className="host-main">
         <div className="map-column">
-          <div className={`host-hud ${final ? '' : 'empty'}`}>
-            {final && (
-              <div className={`result-banner ${final.team ? 'team' : ''}`}>
-                {final.team ? (
-                  <>
-                    <span className="result-tag win">{final.team.tie ? '공동 우승' : '이긴 팀'}</span>
-                    <span className="result-headline">
-                      {winners.map((t) => (
-                        <span key={t.id} className="result-team-name" style={{ background: t.color }}>
-                          {t.name}
-                        </span>
-                      ))}
-                      {final.team.tie ? '무승부!' : '승리!'}
-                    </span>
-                    {final.team.bonus > 0 && room.groupCode && <span className="result-bonus">팀원 모두 +{final.team.bonus} 달란트</span>}
-                  </>
-                ) : (
-                  <>
-                    <span className="result-tag win">퀴즈 종료</span>
-                    <span className="result-headline">{mvpNames.length > 0 ? `오늘의 MVP ${mvpNames.join(' · ')}` : '모두 수고했어요!'}</span>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
+          <ResultHud room={room} />
 
           {room.status === 'lobby' && room.pin && (
             <div className="pin-board">
@@ -323,107 +248,79 @@ export function HostRoom() {
                 방 PIN
                 <small>학생 입장용 · 친구들에게 이 숫자 4자리를 알려 주세요</small>
               </span>
-              <span className="pin-digits">
-                {room.pin.split('').map((d, i) => (
-                  <span key={i} className="pin-digit">
-                    {d}
-                  </span>
-                ))}
-              </span>
+              <PinDigits pin={room.pin} />
             </div>
           )}
 
-          {final && final.team && (
-            <div className="result-teams">
-              {final.team.teams.map((t) => {
-                const won = final.team!.winnerTeamIds.includes(t.id);
-                return (
-                  <div key={t.id} className={`result-team-card ${won ? 'win' : 'lose'}`} style={{ borderColor: t.color }}>
-                    <span className={`result-tag ${won ? 'win' : 'lose'}`}>{won ? (final.team!.tie ? '무승부' : '이긴 팀') : '진 팀'}</span>
-                    <span className="result-team-title">
-                      <span className="team-dot" style={{ background: t.color }} />
-                      {t.name}
-                    </span>
-                    <span className="result-team-score">
-                      <span className="result-team-stat">
-                        합계 <b>{t.total}</b>점
-                      </span>
-                      <span className="result-team-stat">
-                        평균 <b>{t.average}</b>점
-                      </span>
-                      <span className="result-team-stat dim">{t.size}명</span>
-                    </span>
-                    {!won && <span className="result-cheer">아쉽지만 잘했어요!</span>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="map-area-3d">
-            {final && webglAvailable ? (
-              <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
-                <div className="canvas-fill">
-                  <ResultCanvas3D columns={resultColumns} />
-                </div>
-              </Suspense>
-            ) : webglAvailable ? (
-              <Suspense fallback={<div className={`map-area ${MAP_CLASS[room.map]}`} />}>
-                <div className="canvas-fill">
-                  <HostCanvas3D
-                    players={room.players}
-                    status={room.status}
-                    correctAnswer={room.lastResult?.correctAnswer ?? null}
-                    correctPlayerIds={room.lastResult?.correctPlayerIds}
-                    positions={positions}
-                    zones={room.zones}
-                  />
-                </div>
-              </Suspense>
-            ) : (
-              <div className={`map-area ${MAP_CLASS[room.map]}`}>
-                {room.status !== 'lobby' && (
-                  <div className="map-zones">
-                    <div className="map-zone">
-                      <div className="map-zone-sign o">O</div>
-                    </div>
-                    <div className="map-zone">
-                      <div className="map-zone-sign x">X</div>
-                    </div>
-                  </div>
-                )}
-                <div className="map-avatars">
-                  {room.players.map((p) => {
-                    const pos = positionFor(p);
-                    return (
-                      <div key={p.id} className="map-avatar" style={{ left: pos.left, top: pos.top }}>
-                        <div className="map-avatar-sprite">
-                          <AvatarIcon avatarId={p.avatar} size={36} />
-                        </div>
-                        <span className="map-avatar-name">{p.nickname}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
+          <ResultTeams room={room} />
+          <RoomStage room={room} positions={positions} />
         </div>
 
         <div className={`side-panel ${final ? 'side-finished' : ''}`}>
           {canSetup && (
-            <div className="setup-panel music-panel">
-              <MusicPicker />
+            <div className="setup-panel link-guide-panel">
+              <b>송출 PC · 리모컨</b>
+              <p className="fine-print">프로젝터 PC는 `/#/display` 를 열고, 아래 짝 코드로 붙이세요. 진행자 비밀번호는 송출 화면에 넣지 않아요.</p>
+              <div className="row" style={{ gap: 6 }}>
+                <input
+                  className="input input-sm"
+                  inputMode="numeric"
+                  placeholder="PC 짝 코드 6자리"
+                  maxLength={6}
+                  value={pairCode}
+                  onChange={(e) => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+                <button className="btn btn-sm btn-primary" type="button" disabled={pairCode.length !== 6} onClick={pairDisplay}>
+                  PC 연결
+                </button>
+              </div>
+              <p className="fine-print">
+                송출 {(room.displayCount ?? 0) > 0 ? `${room.displayCount}대 연결됨` : '아직 없음'} · 리모컨{' '}
+                {(room.remoteCount ?? 0) > 0 ? `${room.remoteCount}대` : '아직 없음'}
+              </p>
+              <a className="btn btn-sm" href="#/display" target="_blank" rel="noreferrer">
+                이 PC에서 송출 화면 열기
+              </a>
+              <div className="remote-guide">
+                <p className="fine-print">선생님 폰 리모컨 주소 (비밀번호는 주소에 넣지 않음)</p>
+                <p className="join-text-url">{displayUrl(remUrl)}</p>
+                <div className="row" style={{ gap: 6 }}>
+                  <button className="btn btn-sm" type="button" onClick={() => copyText('remote', remUrl)}>
+                    {copied === 'remote' ? '복사됨' : '주소 복사'}
+                  </button>
+                  <a className="btn btn-sm btn-primary" href={remUrl.replace(/^[^#]*/, '')} target="_blank" rel="noreferrer">
+                    리모컨 열기
+                  </a>
+                </div>
+                <QrCode value={remUrl} label="리모컨 QR" className="qr-host-remote" />
+              </div>
+              {qrUrl && (
+                <div className="join-guide">
+                  <p className="fine-print">학생 입장 (QR에는 방 PIN 포함, 글자 주소에는 없음)</p>
+                  <QrCode value={qrUrl} label="학생 입장 QR" className="qr-host-join" />
+                  {textUrl && <p className="join-text-url">{textUrl}</p>}
+                  {textUrl && (
+                    <button className="btn btn-sm" type="button" onClick={() => copyText('join', textUrl)}>
+                      {copied === 'join' ? '복사됨' : '글자 주소 복사'}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
+
+          {canSetup && (
+            <div className="setup-panel music-panel">
+              <MusicPicker />
+              {(room.displayCount ?? 0) > 0 && <p className="fine-print">송출 PC가 연결되어 소리가 그쪽에서 나요.</p>}
+            </div>
+          )}
+
           {canSetup && (
             <div className="setup-panel">
               <div className="setup-row">
                 <b>팀 대결</b>
-                <button
-                  className={`btn btn-sm ${team ? 'btn-primary' : ''}`}
-                  onClick={() => gameSocket.send('setTeamMode', { roomId, enabled: !team })}
-                >
+                <button className={`btn btn-sm ${team ? 'btn-primary' : ''}`} onClick={() => gameSocket.send('setTeamMode', { roomId, enabled: !team })}>
                   {team ? '켜짐' : '꺼짐'}
                 </button>
               </div>
@@ -509,62 +406,21 @@ export function HostRoom() {
             </div>
           )}
 
-          {team && (
-            <div className="team-board">
-              {team.teams.map((t) => (
-                <div key={t.id} className="team-box" style={{ borderColor: t.color }}>
-                  <div className="team-box-head" style={{ background: t.color }}>
-                    <span>{t.name}</span>
-                    <span className="team-box-score">{showTeamScore ? `합계 ${t.total} · 평균 ${t.average}` : `${t.size}명`}</span>
-                  </div>
-                  {showTeamScore && (
-                    <div className="team-bar">
-                      <div className="team-bar-fill" style={{ width: `${(t.average / maxAvg) * 100}%`, background: t.color }} />
-                    </div>
-                  )}
-                  {canSetup && (
-                    <div className="team-members">
-                      {room.players
-                        .filter((p) => p.teamId === t.id)
-                        .map((p) => (
-                          <button key={p.id} className="team-member" onClick={() => nextTeamOf(p)} title="누르면 다음 팀으로">
-                            {p.nickname}
-                          </button>
-                        ))}
-                      {t.size === 0 && <span className="fine-print">아직 없음</span>}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {team && <TeamBoard room={room} onMember={canSetup ? nextTeamOf : undefined} />}
 
-          <div className="scoreboard">
-            {sorted.length === 0 && <p className="subtitle">아직 참여한 친구가 없어요.</p>}
-            {sorted.map((p, i) => {
-              const t = p.teamId ? teamById.get(p.teamId) : undefined;
-              const award = awardById.get(p.id);
-              return (
-                <div key={p.id} className="scoreboard-row">
-                  <span>
-                    {t && <span className="team-dot" style={{ background: t.color }} />}
-                    {i + 1}. {p.nickname}
-                    {final?.mvpIds.includes(p.id) && <span className="mvp-chip">MVP</span>}
-                  </span>
-                  <span>
-                    {p.score}점
-                    {award && (
-                      <span className={`award-chip ${award.capped ? 'capped' : ''}`} title={award.capped ? `주간 상한으로 ${award.requested}개 중 ${award.delta}개만 지급` : undefined}>
-                        +{award.delta}
-                        {award.capped && ' 상한'}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+          <ScoreList room={room} />
           {final?.recorded && <p className="fine-print side-note">달란트가 {room.groupCode} 반 장부에 기록됐어요.</p>}
+          {!canSetup && (
+            <p className="fine-print side-note">
+              <Link to={`/remote/${room.joinCode ?? room.id}`} target="_blank">
+                폰 리모컨
+              </Link>
+              {' · '}
+              <Link to={`/display/${room.id}`} target="_blank">
+                송출 화면
+              </Link>
+            </p>
+          )}
         </div>
       </div>
     </div>

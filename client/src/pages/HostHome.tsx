@@ -128,6 +128,20 @@ export function HostHome() {
       </div>
       </div>
 
+      <div className="card stack host-home-links">
+        <h2 className="card-title">
+          <span className="title-block block-blue" aria-hidden />
+          송출 PC · 폰 리모컨
+        </h2>
+        <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>
+          프로젝터·TV용 PC는 송출 화면을 열고, 선생님 폰은 방에서 안내하는 리모컨 주소로 들어가세요. 진행자 비밀번호는 송출 PC에 넣지 않아요.
+        </p>
+        <button className="btn btn-primary" type="button" onClick={() => navigate('/display')}>
+          송출 화면 열기
+        </button>
+        <p className="fine-print">방을 만든 뒤 진행자 화면에서 PC 짝 코드·리모컨 QR을 확인할 수 있어요.</p>
+      </div>
+
       <button className="link-btn" onClick={() => navigate('/')}>
         학생 화면으로 이동
       </button>

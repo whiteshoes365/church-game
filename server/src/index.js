@@ -31,7 +31,16 @@ import {
   setHostPassword,
   requestGait,
   gaitStatus,
+  pauseQuestion,
+  resumeQuestion,
+  endQuiz,
+  kickPlayer,
+  zoneCounts,
+  normalizeMusic,
+  findRoomByJoinCode,
+  normalizeJoinCode,
 } from './state.js';
+import { randomInt } from 'node:crypto';
 import { LEVELS, QUESTIONS_BY_LEVEL } from './questions.js';
 import {
   openGroup,
@@ -75,11 +84,65 @@ function send(socket, type, payload) {
   }
 }
 
+// ---- 접속 역할 ----
+// 한 방에 붙는 "학생이 아닌" 접속은 세 가지다.
+//  - host    : 진행자 화면 (PC). 진행 권한 있음.
+//  - remote  : 선생님 휴대폰 리모컨. 진행 권한 있음 + 정답을 미리 본다.
+//  - display : 송출 화면(프로젝터·TV). 보기만 한다. 진행자 비밀번호·정답을 받지 않고, 진행 명령은 모두 거절된다.
+// host·remote 는 room.hostSockets, display 는 room.displaySockets 에 들어간다.
+// socket.attachments: roomId -> 'host' | 'remote' | 'display'
+function attachSocket(socket, room, kind) {
+  room.hostSockets.delete(socket);
+  room.displaySockets.delete(socket);
+  if (kind === 'display') room.displaySockets.add(socket);
+  else room.hostSockets.add(socket);
+  socket.attachments.set(room.id, kind);
+}
+
+function viewOf(socket, room) {
+  return socket.attachments.get(room.id) || 'player';
+}
+
+// 진행자 화면·리모컨·송출 화면에만 보낸다 (학생 화면이 받는 값은 그대로일 때).
+function broadcastStaff(room, except = null) {
+  const cache = {};
+  const snap = (view) => (cache[view] ||= serializeRoom(room, { view }));
+  for (const s of room.hostSockets) if (s !== except) send(s, 'roomState', { room: snap(viewOf(s, room)) });
+  for (const s of room.displaySockets) if (s !== except) send(s, 'roomState', { room: snap('display') });
+}
+
 function broadcastRoom(room) {
   const snapshot = serializeRoom(room);
-  for (const p of room.players.values()) send(p.socket, 'roomState', { room: snapshot });
-  // 호스트에게만 방 PIN 이 담긴 스냅샷을 보낸다.
-  send(room.hostSocket, 'roomState', { room: serializeRoom(room, { forHost: true }) });
+  for (const p of room.players.values()) {
+    // 진행자 접속이 학생으로도 들어와 있으면 아래에서 진행자용 스냅샷을 받는다.
+    if (p.socket && (room.hostSockets.has(p.socket) || room.displaySockets.has(p.socket))) continue;
+    send(p.socket, 'roomState', { room: snapshot });
+  }
+  // 방 PIN·진행자 비밀번호는 진행 권한이 있는 접속에만, 방 PIN 은 송출 화면에도 보낸다.
+  broadcastStaff(room);
+}
+
+// ---- 송출 화면 연결 코드 ----
+// PC 가 「송출 화면」을 열면 숫자 6자리 연결 코드를 받는다. 선생님 리모컨(진행 권한 있음)이
+// 그 숫자를 넣으면 그 PC 가 방의 송출 화면이 된다. 진행자 비밀번호는 PC 에 입력하지 않는다.
+const PAIR_TTL_MS = 10 * 60 * 1000;
+const pairWaiting = new Map(); // code -> { socket, expiresAt }
+
+function dropPairCode(socket) {
+  if (socket.pairCode && pairWaiting.get(socket.pairCode)?.socket === socket) pairWaiting.delete(socket.pairCode);
+  socket.pairCode = null;
+}
+
+function newPairCode(socket) {
+  dropPairCode(socket);
+  const now = Date.now();
+  for (const [code, entry] of pairWaiting) if (entry.expiresAt <= now) pairWaiting.delete(code);
+  let code;
+  do code = String(randomInt(0, 1000000)).padStart(6, '0');
+  while (pairWaiting.has(code));
+  pairWaiting.set(code, { socket, expiresAt: now + PAIR_TTL_MS });
+  socket.pairCode = code;
+  return code;
 }
 
 // ---- 방 PIN / 호스트 확인 ----
@@ -119,6 +182,8 @@ function bumpFail(f) {
 // 반환: 'ok' | 'need' (아무것도 안 보냄 → 입력 화면) — 틀리면 오류를 던진다.
 function checkHostAccess(socket, room, msg) {
   if (room && typeof msg.hostKey === 'string' && msg.hostKey === room.hostKey) return 'ok';
+  // 진행자 비밀번호로 이미 확인받은 기기가 다시 접속할 때 (비밀번호를 바꾸면 이 값도 바뀐다)
+  if (room && typeof msg.controlKey === 'string' && msg.controlKey === room.controlKey) return 'ok';
   const supplied = typeof msg.hostPassword === 'string' && msg.hostPassword.length > 0;
   if (!supplied) return 'need';
   const now = Date.now();
@@ -220,10 +285,12 @@ function markRoomAttendance(room, player) {
 
 // 게임이 끝나는 순간 한 번만 호출: 결과 요약(MVP·팀 승패)을 만들고,
 // 반이 연결돼 있으면 달란트를 원장에 기록한다.
+// 공개한 문제가 0개여도(첫 정답 공개 전 끝내기) 0점 결과 요약을 만든다.
 function finalizeGame(room) {
-  if (room.status !== 'finished' || room.finalResult || room.questions.length === 0) return;
-  const result = buildFinalResult(room);
-  room.finalResult = result;
+  if (room.status !== 'finished') return;
+  if (!room.finalResult) room.finalResult = buildFinalResult(room);
+  const result = room.finalResult;
+  if (result.recorded) return;
   // 닉네임 주인 확인을 통과한 친구만 반 장부에 기록한다.
   const players = [...room.players.values()].filter((p) => p.recordKey);
   if (!room.groupCode || players.length === 0) return;
@@ -288,20 +355,35 @@ setInterval(() => {
 setInterval(() => {
   for (const room of allRooms()) {
     if (room.status !== 'question' && room.status !== 'reveal') continue;
-    const targets = [];
-    if (room.hostSocket) targets.push(room.hostSocket);
-    for (const player of room.players.values()) {
-      if (player.socket && player.socket !== room.hostSocket) targets.push(player.socket);
-    }
-    const open = targets.filter((s) => s.readyState === s.OPEN);
+    // 진행자 화면·송출 화면·학생에게 보낸다 (리모컨은 지도를 그리지 않으므로 보내지 않는다).
+    const targets = new Set();
+    for (const s of room.hostSockets) if (viewOf(s, room) !== 'remote') targets.add(s);
+    for (const s of room.displaySockets) targets.add(s);
+    for (const player of room.players.values()) if (player.socket) targets.add(player.socket);
+    const open = [...targets].filter((s) => s.readyState === s.OPEN);
     if (open.length === 0) continue;
     const data = JSON.stringify({ type: 'positions', roomId: room.id, players: serializePositions(room) });
     for (const s of open) s.send(data);
   }
 }, POSITIONS_BROADCAST_MS);
 
+// 리모컨 응답 현황: 문제 중에 1초마다 O / X / 아직 인원을 리모컨에만 보낸다.
+setInterval(() => {
+  for (const room of allRooms()) {
+    if (room.status !== 'question') continue;
+    let data = null;
+    for (const s of room.hostSockets) {
+      if (viewOf(s, room) !== 'remote' || s.readyState !== s.OPEN) continue;
+      data ||= JSON.stringify({ type: 'remoteStatus', roomId: room.id, zoneCounts: zoneCounts(room) });
+      s.send(data);
+    }
+  }
+}, 1000);
+
 wss.on('connection', (socket) => {
   socket.meta = { roomId: null, deviceId: null, role: null };
+  socket.attachments = new Map(); // roomId -> 'host' | 'remote' | 'display'
+  socket.pairCode = null; // 송출 화면 연결을 기다리는 중이면 그 코드
   socket.groupAuth = new Set(); // 이 소켓이 교사 PIN 으로 연 반 코드들
   socket.joinFails = { count: 0, lockedUntil: 0 }; // 방 PIN 틀린 횟수
   socket.hostFails = { count: 0, lockedUntil: 0 }; // 진행자 비밀번호 틀린 횟수
@@ -325,17 +407,24 @@ wss.on('connection', (socket) => {
 
   socket.on('close', () => {
     for (const c of socket.groupAuth) groupWatchers.get(c)?.delete(socket);
-    const { roomId, deviceId, role } = socket.meta;
-    if (!roomId) return;
-    const room = getRoom(roomId);
-    if (!room) return;
-    if (role === 'host' && room.hostSocket === socket) {
-      room.hostSocket = null;
-    } else if (role === 'player' && deviceId) {
-      const player = room.players.get(deviceId);
-      if (player) player.connected = false;
+    dropPairCode(socket);
+    const touched = new Set();
+    for (const attachedRoomId of socket.attachments.keys()) {
+      const attachedRoom = getRoom(attachedRoomId);
+      if (!attachedRoom) continue;
+      attachedRoom.hostSockets.delete(socket);
+      attachedRoom.displaySockets.delete(socket);
+      touched.add(attachedRoom);
     }
-    broadcastRoom(room);
+    socket.attachments.clear();
+    const { roomId, deviceId, role } = socket.meta;
+    const room = roomId ? getRoom(roomId) : null;
+    if (room && role === 'player' && deviceId) {
+      const player = room.players.get(deviceId);
+      if (player && player.socket === socket) player.connected = false;
+      touched.add(room);
+    }
+    for (const r of touched) broadcastRoom(r);
   });
 });
 
@@ -374,7 +463,8 @@ function handleMessage(socket, msg) {
         pin: msg.pin,
         hostPassword: msg.hostPassword,
       });
-      room.hostSocket = socket;
+      if (msg.music) room.music = normalizeMusic(msg.music, room.music);
+      attachSocket(socket, room, msg.as === 'remote' ? 'remote' : 'host');
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
       if (msg.groupCode) {
         // 반 연결에 실패해도(PIN 오류 등) 방은 그대로 만들고 이유만 알려 준다.
@@ -385,7 +475,7 @@ function handleMessage(socket, msg) {
         }
       }
       if (msg.teamMode) setTeamMode(room, { enabled: true, count: msg.teamCount, bonus: msg.teamBonus });
-      send(socket, 'roomCreated', { room: serializeRoom(room, { forHost: true }), hostKey: room.hostKey });
+      send(socket, 'roomCreated', { room: serializeRoom(room, { view: viewOf(socket, room) }), hostKey: room.hostKey });
       break;
     }
 
@@ -396,9 +486,118 @@ function handleMessage(socket, msg) {
         send(socket, 'hostAuthRequired', { roomId: msg.roomId, message: '진행자 화면을 열려면 선생님용 진행자 비밀번호를 입력해 주세요.' });
         break;
       }
-      room.hostSocket = socket;
+      // as: 'remote' = 선생님 휴대폰 리모컨. 진행자 화면과 리모컨은 동시에 여러 개 붙을 수 있다.
+      attachSocket(socket, room, msg.as === 'remote' ? 'remote' : 'host');
       socket.meta = { roomId: room.id, deviceId: null, role: 'host' };
-      send(socket, 'roomState', { room: serializeRoom(room, { forHost: true }) });
+      send(socket, 'roomState', { room: serializeRoom(room, { view: viewOf(socket, room) }) });
+      broadcastStaff(room, socket);
+      break;
+    }
+
+    // ---- 입장 코드 → 방 (QR·짧은 주소) ----
+    case 'resolveJoinCode': {
+      const code = normalizeJoinCode(msg.code);
+      const room = findRoomByJoinCode(code);
+      send(socket, 'joinCodeResolved', { code, roomId: room ? room.id : null, title: room ? room.title : null });
+      break;
+    }
+
+    // ---- 송출 화면 (프로젝터·TV) ----
+    // 방을 아직 모르는 PC: 연결 코드를 받아 화면에 띄운다.
+    case 'displayPairRequest': {
+      send(socket, 'displayPairCode', { code: newPairCode(socket), ttlMs: PAIR_TTL_MS });
+      break;
+    }
+
+    // 송출 화면 열기: 송출 전용 키, 방을 만든 브라우저, 또는 이미 진행자로 확인된 접속만.
+    // 진행자 비밀번호는 받지 않는다 (프로젝터에 입력하게 하지 않는다).
+    case 'displayOpen': {
+      const room = getRoom(msg.roomId);
+      const same = (a, b) => typeof a === 'string' && a.length > 0 && a === b;
+      const ok = room && (same(msg.displayKey, room.displayKey) || same(msg.hostKey, room.hostKey) || same(msg.controlKey, room.controlKey) || room.hostSockets.has(socket));
+      if (!ok) {
+        send(socket, 'displayAuthRequired', { roomId: msg.roomId });
+        break;
+      }
+      dropPairCode(socket);
+      attachSocket(socket, room, 'display'); // 진행자였던 접속도 여기서부터는 보기 전용이 된다
+      if (socket.meta.role === 'host' && socket.meta.roomId === room.id) socket.meta = { roomId: null, deviceId: null, role: null };
+      send(socket, 'displayReady', { roomId: room.id, displayKey: room.displayKey });
+      send(socket, 'roomState', { room: serializeRoom(room, { view: 'display' }) });
+      broadcastStaff(room, socket);
+      break;
+    }
+
+    // 리모컨(진행 권한 있음)이 PC 에 보이는 연결 코드를 넣어 그 PC 를 송출 화면으로 붙인다.
+    case 'pairDisplay': {
+      const room = requireHostRoom(socket, msg.roomId);
+      const code = String(msg.code ?? '').replace(/\D/g, '');
+      const entry = pairWaiting.get(code);
+      if (!entry || entry.expiresAt <= Date.now() || entry.socket.readyState !== entry.socket.OPEN) {
+        throw new Error('연결 코드가 맞지 않아요. PC 송출 화면에 보이는 숫자 6자리를 다시 확인해 주세요.');
+      }
+      const target = entry.socket;
+      dropPairCode(target);
+      attachSocket(target, room, 'display');
+      send(target, 'displayPaired', { roomId: room.id, displayKey: room.displayKey });
+      send(target, 'roomState', { room: serializeRoom(room, { view: 'display' }) });
+      send(socket, 'displayLinked', { roomId: room.id });
+      broadcastStaff(room, target);
+      break;
+    }
+
+    // ---- 진행 (진행자 화면 · 리모컨) ----
+    case 'pause': {
+      const room = requireHostRoom(socket, msg.roomId);
+      const changed = msg.paused === false ? resumeQuestion(room) : pauseQuestion(room);
+      if (changed) broadcastRoom(room);
+      break;
+    }
+
+    // 퀴즈를 일찍 끝내고 결과 화면으로: 지금까지 공개한 문제까지만 친다.
+    case 'endQuiz': {
+      const room = requireHostRoom(socket, msg.roomId);
+      if (endQuiz(room)) {
+        finalizeGame(room);
+        broadcastRoom(room);
+      }
+      break;
+    }
+
+    case 'kickPlayer': {
+      const room = requireHostRoom(socket, msg.roomId);
+      const player = kickPlayer(room, msg.playerId);
+      if (!player) throw new Error('참가자를 찾을 수 없어요.');
+      if (player.socket) {
+        send(player.socket, 'kicked', { roomId: room.id, message: '선생님이 이 방에서 내보냈어요.' });
+        if (player.socket.meta.roomId === room.id && player.socket.meta.role === 'player') {
+          player.socket.meta = { roomId: null, deviceId: null, role: null };
+        }
+      }
+      broadcastRoom(room);
+      break;
+    }
+
+    // 내보낸 친구들이 다시 들어올 수 있게 한다.
+    case 'clearKicks': {
+      const room = requireHostRoom(socket, msg.roomId);
+      room.kicked.clear();
+      broadcastStaff(room);
+      break;
+    }
+
+    // 배경 음악 고르기: 소리는 송출 화면(없으면 진행자 PC)에서만 난다. 여기서는 고른 값만 맞춘다.
+    case 'setMusic': {
+      const room = requireHostRoom(socket, msg.roomId);
+      room.music = normalizeMusic({ track: msg.track, enabled: msg.enabled, volume: msg.volume }, room.music);
+      broadcastStaff(room);
+      break;
+    }
+
+    case 'setDisplayOptions': {
+      const room = requireHostRoom(socket, msg.roomId);
+      if (typeof msg.showQr === 'boolean') room.showQr = msg.showQr;
+      broadcastStaff(room);
       break;
     }
 
@@ -410,6 +609,7 @@ function handleMessage(socket, msg) {
       const already = room?.players.get(msg.deviceId);
       if (!room || (!already && !pinMatches(room, msg.pin))) failJoin(socket);
       socket.joinFails.count = 0;
+      if (room.kicked.has(msg.deviceId)) throw new Error('선생님이 이 방에서 내보냈어요. 다시 들어오려면 선생님께 말씀드려 주세요.');
       const nickname = String(msg.nickname ?? '').trim().replace(/\s+/g, ' ').slice(0, 12) || already?.nickname || '친구';
       // 같은 방 안에서도 닉네임은 한 명만 (먼저 들어온 친구 우선).
       const wantedKey = nickKey(nickname);
@@ -653,7 +853,8 @@ function requireShopPlayer(socket, roomId) {
 function requireHostRoom(socket, roomId) {
   const room = getRoom(roomId);
   if (!room) throw new Error('방을 찾을 수 없어요.');
-  if (room.hostSocket !== socket) throw new Error('호스트만 사용할 수 있어요.');
+  // 진행자 화면·리모컨만. 송출 화면(display)과 학생은 여기서 막힌다.
+  if (!room.hostSockets.has(socket)) throw new Error('호스트만 사용할 수 있어요.');
   return room;
 }
 

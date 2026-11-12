@@ -23,8 +23,8 @@ function zoneCenterX(box: Rect): number {
 // 이름표와 겹친다. 서버가 알려 준 자리(x, z)를 화면 좌표로 옮겨 보고(카메라·글자
 // 크기는 아래 상수와 CSS 에서 온다), 겹칠 이웃이 있으면 이름표를 한 단씩 위로
 // 올린다(가장 낮은 빈 단을 고른다).
-const CAMERA = { x: 0, y: 10.5, z: 15, fov: 48 }; // HostCanvas3D 의 카메라와 같아야 한다
-const LOOK_AT = { x: 0, y: 1.8, z: 1 };
+const CAMERA = { x: 0, y: 12.2, z: 18.2, fov: 44 }; // HostCanvas3D 와 같아야 한다. 앞줄(z≈7~8.5) 발이 잘리지 않게 뒤로·위로
+const LOOK_AT = { x: 0, y: 0.35, z: 2.2 };
 const CHARACTER_SCALE = 1.5;
 const LABEL_TIER = 0.62; // 한 단 높이 (캐릭터 기준 단위)
 const LABEL_TIERS = 8;
@@ -97,9 +97,10 @@ function CameraRig() {
   const { camera } = useThree();
   useFrame((state) => {
     const t = state.clock.elapsedTime;
-    camera.position.x = Math.sin(t * 0.15) * 0.6;
-    camera.position.y = 10.5 + Math.sin(t * 0.1) * 0.3;
-    camera.lookAt(0, 1.8, 1);
+    camera.position.x = Math.sin(t * 0.15) * 0.5;
+    camera.position.y = CAMERA.y + Math.sin(t * 0.1) * 0.25;
+    camera.position.z = CAMERA.z;
+    camera.lookAt(LOOK_AT.x, LOOK_AT.y, LOOK_AT.z);
   });
   return null;
 }
@@ -107,6 +108,27 @@ function CameraRig() {
 // 정답 공개 순간 머리 위로 떠오르는 점수 표시: 정답 = 초록 +N, 오답 = 빨강 빼기(−) 막대.
 // 넘어지는 캐릭터를 따라 눕지 않도록 캐릭터 안이 아니라 무대 좌표에 따로 띄운다.
 const POPUP_Z_RANGE: [number, number] = [16777290, 16777280]; // 이름표(기본 범위)보다 항상 위
+const POPUP_LIFT = 0.95; // 겹치는 이웃보다 한 단 위
+const POPUP_NEAR_XZ = 1.35; // 이 거리 안이면 같은 무더기로 보고 위아래로 엇갈린다
+
+/** 가까이 모인 점수 표시를 위아래로 엇갈리게 둔다 (앞줄·왼쪽부터 낮은 단). */
+export function layoutPopupLifts(items: { id: string; x: number; z: number }[]): Map<string, number> {
+  const lifts = new Map<string, number>();
+  const order = [...items].sort((a, b) => b.z - a.z || a.x - b.x || a.id.localeCompare(b.id));
+  const placed: { id: string; x: number; z: number; lift: number }[] = [];
+  for (const it of order) {
+    let lift = 0;
+    for (;;) {
+      const clash = placed.some((p) => p.lift === lift && Math.hypot(p.x - it.x, p.z - it.z) < POPUP_NEAR_XZ);
+      if (!clash) break;
+      lift += 1;
+      if (lift >= 8) break;
+    }
+    lifts.set(it.id, lift);
+    placed.push({ id: it.id, x: it.x, z: it.z, lift });
+  }
+  return lifts;
+}
 
 function ScorePopup({ position, correct, points, delayMs }: { position: [number, number, number]; correct: boolean; points: number; delayMs: number }) {
   return (
@@ -214,20 +236,24 @@ export function HostScene3D({ players, status, correctAnswer, correctPlayerIds, 
       })}
 
       {revealing &&
-        players.map((p, index) => {
-          const { x, z } = spots[index];
-          const isCorrect = correctPlayerIds ? correctPlayerIds.includes(p.id) : p.side === correctAnswer;
-          const lift = (tiers.get(p.id) ?? 0) * LABEL_TIER;
-          return (
-            <ScorePopup
-              key={`popup-${p.id}`}
-              position={[x, CHARACTER_SCALE * (nameTagHeight(!!p.cosmetics?.hat, lift) + 0.75), z]}
-              correct={isCorrect}
-              points={POINTS_PER_CORRECT}
-              delayMs={(index % 4) * 90}
-            />
-          );
-        })}
+        (() => {
+          const popupLifts = layoutPopupLifts(players.map((p, index) => ({ id: p.id, x: spots[index].x, z: spots[index].z })));
+          return players.map((p, index) => {
+            const { x, z } = spots[index];
+            const isCorrect = correctPlayerIds ? correctPlayerIds.includes(p.id) : p.side === correctAnswer;
+            const nameLift = (tiers.get(p.id) ?? 0) * LABEL_TIER;
+            const popLift = (popupLifts.get(p.id) ?? 0) * POPUP_LIFT;
+            return (
+              <ScorePopup
+                key={`popup-${p.id}`}
+                position={[x, CHARACTER_SCALE * (nameTagHeight(!!p.cosmetics?.hat, nameLift) + 0.75 + popLift), z]}
+                correct={isCorrect}
+                points={POINTS_PER_CORRECT}
+                delayMs={(popupLifts.get(p.id) ?? index % 4) * 70}
+              />
+            );
+          });
+        })()}
     </>
   );
 }

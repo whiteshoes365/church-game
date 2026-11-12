@@ -6,6 +6,11 @@ class GameSocket {
   private socket: WebSocket | null = null;
   private listeners = new Map<string, Set<Listener>>();
   private queue: string[] = [];
+  // 다시 연결됐을 때 부를 함수들 (송출 화면·리모컨·진행자 화면이 "방 다시 열기"를 여기에 건다).
+  private openHooks = new Set<() => void>();
+  private everOpened = false;
+  private retryTimer: number | null = null;
+  private watching = false;
 
   connect() {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
@@ -14,8 +19,17 @@ class GameSocket {
     const socket = new WebSocket(WS_URL);
     this.socket = socket;
     socket.addEventListener('open', () => {
+      // 끊겼다가 다시 붙은 경우: 먼저 방을 다시 열고(권한 확인), 그 다음에 밀린 메시지를 보낸다.
+      if (this.everOpened) for (const fn of [...this.openHooks]) fn();
+      this.everOpened = true;
       for (const raw of this.queue) socket.send(raw);
       this.queue = [];
+      this.emit('socketOpen');
+    });
+    socket.addEventListener('close', () => {
+      if (this.socket !== socket) return;
+      this.emit('socketClose');
+      this.scheduleRetry();
     });
     socket.addEventListener('message', (event) => {
       let msg: any;
@@ -27,6 +41,44 @@ class GameSocket {
       const set = this.listeners.get(msg.type);
       if (set) for (const fn of set) fn(msg);
     });
+  }
+
+  private emit(type: string) {
+    const set = this.listeners.get(type);
+    if (set) for (const fn of [...set]) fn({ type });
+  }
+
+  // 다시 연결은 "방 다시 열기"를 걸어 둔 화면이 있을 때만 한다 (다른 화면의 동작은 예전 그대로).
+  private scheduleRetry() {
+    if (this.openHooks.size === 0 || this.retryTimer !== null) return;
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = null;
+      if (this.openHooks.size > 0) this.connect();
+    }, 1200);
+  }
+
+  get isOpen() {
+    return !!this.socket && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * 연결이 끊겼다가 다시 붙을 때마다 fn 을 부른다 (휴대폰이 잠겼다 켜질 때, 와이파이가 바뀔 때 등).
+   * 이 함수를 걸어 둔 동안에는 끊기면 자동으로 다시 연결한다.
+   */
+  onReconnect(fn: () => void): () => void {
+    this.openHooks.add(fn);
+    if (!this.watching) {
+      this.watching = true;
+      const wake = () => {
+        if (this.openHooks.size > 0 && document.visibilityState !== 'hidden') this.connect();
+      };
+      document.addEventListener('visibilitychange', wake);
+      window.addEventListener('online', wake);
+      window.addEventListener('focus', wake);
+    }
+    return () => {
+      this.openHooks.delete(fn);
+    };
   }
 
   send(type: string, payload: Record<string, unknown> = {}) {

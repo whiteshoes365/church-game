@@ -40,6 +40,50 @@ export const MAX_TEAM_BONUS = 5;
 
 const churches = new Map(); // id -> { id, name, normalized }
 const rooms = new Map(); // id -> room
+const joinCodes = new Map(); // 입장 코드(짧은 글자) -> room id
+
+// 배경 음악: 소리는 송출 화면(또는 진행자 PC)에서만 난다. 서버는 "지금 고른 곡·크기"만 기억해서
+// 진행자 화면·리모컨·송출 화면이 같은 값을 보게 한다. 곡 id 는 client/src/music.ts 와 같다.
+export const MUSIC_TRACK_IDS = ['upbeat', 'calm', 'countdown', 'chiptune', 'march', 'musicbox'];
+export const DEFAULT_MUSIC = { track: 'upbeat', enabled: true, volume: 0.3 };
+
+export function normalizeMusic(input, base = DEFAULT_MUSIC) {
+  const next = { ...base };
+  if (input && typeof input === 'object') {
+    if (MUSIC_TRACK_IDS.includes(input.track)) next.track = input.track;
+    if (typeof input.enabled === 'boolean') next.enabled = input.enabled;
+    const v = Number(input.volume);
+    if (input.volume !== undefined && input.volume !== null && Number.isFinite(v)) next.volume = Math.round(clamp(v, 0, 1) * 100) / 100;
+  }
+  return next;
+}
+
+// 입장 코드: QR·주소에 넣는 짧은 방 이름표 (헷갈리는 0/O, 1/I/L 은 뺀다). 비밀이 아니다 — 방 PIN 이 따로 있다.
+const JOIN_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+export const JOIN_CODE_LENGTH = 5;
+
+function newJoinCode() {
+  for (;;) {
+    let code = '';
+    for (let i = 0; i < JOIN_CODE_LENGTH; i++) code += JOIN_CODE_ALPHABET[randomInt(0, JOIN_CODE_ALPHABET.length)];
+    if (!joinCodes.has(code)) return code;
+  }
+}
+
+export function normalizeJoinCode(code) {
+  return String(code ?? '').trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
+}
+
+export function findRoomByJoinCode(code) {
+  const id = joinCodes.get(normalizeJoinCode(code));
+  return id ? rooms.get(id) || null : null;
+}
+
+// 학생 입장 주소의 해시 경로. QR 에는 방 PIN 까지 넣고(withPin), 글자로 보여 주는 주소에는 넣지 않는다.
+// 전체 주소 = <사이트 주소>/#<이 경로>
+export function joinPathFor(room, { withPin = true } = {}) {
+  return `/j/${room.joinCode}${withPin ? `?p=${room.pin}` : ''}`;
+}
 
 // Per-church memory of recently-played question ids, so a church doesn't see
 // the same questions over and over across consecutive games. Keeps only the
@@ -70,9 +114,11 @@ function clampToBounds(pos) {
 }
 
 function randomSpawn() {
+  // 반드시 O/X 구역(z 1~6.5) 밖 중립 지대에서 시작한다 (움직이지 않은 학생이 구역에 있으면 안 됨).
+  // 앞줄 발 잘림은 카메라·화면 여백으로 맞춘다 — 시작 z 를 구역 안으로 끌어오면 안 된다.
   return {
     x: MAP_BOUNDS.xmin + 0.5 + Math.random() * (MAP_BOUNDS.xmax - MAP_BOUNDS.xmin - 1),
-    z: 7 + Math.random() * 1.5,
+    z: 7 + Math.random() * 1.5, // 7.0 ~ 8.5 (구역 zmax 6.5 밖)
   };
 }
 
@@ -431,6 +477,7 @@ export function normalizeHostPassword(password) {
 export function setHostPassword(room, password) {
   const p = normalizeHostPassword(password);
   if (p === room.pin) throw new Error('진행자 비밀번호는 방 PIN과 다르게 정해 주세요.');
+  if (p !== room.hostPassword) room.controlKey = randomUUID(); // 예전 비밀번호로 들어왔던 기기는 다시 확인받는다
   room.hostPassword = p;
 }
 
@@ -455,12 +502,24 @@ export function createRoom({ churchId, title, map, capacity, questionSeconds, le
     pin: roomPin,
     hostPassword: roomHostPassword,
     hostKey: randomUUID(), // 방을 만든 브라우저만 아는 값 (호스트 화면 다시 열 때 확인)
+    // 진행자 비밀번호로 들어온 기기가 다시 접속할 때 쓰는 값. 비밀번호를 바꾸면 새로 만든다.
+    controlKey: randomUUID(),
+    // 송출 화면(프로젝터) 전용 값: 화면을 볼 수만 있고 진행은 못 한다.
+    displayKey: randomUUID(),
+    joinCode: newJoinCode(),
     churchId,
     title: (title || '방').trim(),
     map: map || 'sanctuary',
     level: normalizeLevel(level),
     capacity: capacity === 'unlimited' ? 'unlimited' : Number(capacity) || 8,
-    hostSocket: null,
+    hostSockets: new Set(), // 진행 권한이 있는 접속들 (진행자 화면 · 휴대폰 리모컨)
+    displaySockets: new Set(), // 송출 화면 접속들 (보기만)
+    kicked: new Set(), // 선생님이 내보낸 기기 id (다시 받기 전까지 못 들어온다)
+    music: { ...DEFAULT_MUSIC },
+    showQr: true, // 송출 화면에 입장 QR 을 보여 줄지
+    paused: false, // 문제 시간 멈춤
+    remainingMs: null, // 멈춘 순간 남아 있던 시간
+    onTimeout: null,
     players: new Map(), // deviceId -> player
     status: 'lobby', // lobby | question | reveal | finished
     questionCount: clampQuestionCount(level, questionCount),
@@ -476,6 +535,7 @@ export function createRoom({ churchId, title, map, capacity, questionSeconds, le
     finalResult: null, // 게임이 끝나면 채워지는 결과 요약 (MVP, 팀 승패, 달란트)
   };
   rooms.set(room.id, room);
+  joinCodes.set(room.joinCode, room.id);
   return room;
 }
 
@@ -516,6 +576,8 @@ export function joinRoom(room, { deviceId, nickname, avatar }) {
 
 export function startQuiz(room, questionCount) {
   clearTimer(room);
+  room.paused = false;
+  room.remainingMs = null;
   const count = clampQuestionCount(room.level, questionCount || room.questionCount);
   const excludeIds = recentIdsForChurch(room.churchId);
   room.questions = selectQuizQuestions({ level: room.level, count, excludeIds });
@@ -544,6 +606,9 @@ export function clearTimer(room) {
 
 export function advanceQuestion(room, onTimeout) {
   clearTimer(room);
+  room.paused = false;
+  room.remainingMs = null;
+  room.onTimeout = onTimeout;
   room.currentIndex += 1;
   room.answers = new Map();
   room.lastResult = null;
@@ -557,6 +622,65 @@ export function advanceQuestion(room, onTimeout) {
   room.status = 'question';
   room.deadline = Date.now() + room.questionDurationMs;
   room.timer = setTimeout(() => onTimeout(room), room.questionDurationMs);
+}
+
+// 문제 시간 멈춤(진행자 전용): 남은 시간을 기억해 두고 타이머를 끈다.
+// 다시 시작하면 그 남은 시간만큼만 더 센다. 멈춘 동안에도 캐릭터는 움직일 수 있다.
+export function pauseQuestion(room, now = Date.now()) {
+  if (room.status !== 'question' || room.paused) return false;
+  clearTimer(room);
+  room.remainingMs = Math.max(0, (room.deadline ?? now) - now);
+  room.deadline = null;
+  room.paused = true;
+  return true;
+}
+
+export function resumeQuestion(room, now = Date.now()) {
+  if (room.status !== 'question' || !room.paused) return false;
+  const left = Math.max(0, room.remainingMs ?? 0);
+  room.paused = false;
+  room.remainingMs = null;
+  room.deadline = now + left;
+  const onTimeout = room.onTimeout;
+  room.timer = setTimeout(() => onTimeout && onTimeout(room), left);
+  return true;
+}
+
+// 퀴즈 일찍 끝내기(진행자 전용): 지금까지 공개한 문제까지만 치고 결과 화면으로 간다.
+// 아직 정답을 공개하지 않은 문제는 점수에 넣지 않는다.
+// 공개한 문제가 0개여도 finished + finalResult(0점)를 만들어 결과 띠·시상대가 비지 않게 한다.
+export function endQuiz(room) {
+  if (room.status !== 'question' && room.status !== 'reveal') return false;
+  clearTimer(room);
+  const played = room.status === 'reveal' ? room.currentIndex + 1 : room.currentIndex;
+  room.questions = room.questions.slice(0, Math.max(0, played));
+  room.currentIndex = room.questions.length;
+  room.status = 'finished';
+  room.deadline = null;
+  room.paused = false;
+  room.remainingMs = null;
+  room.answers = new Map();
+  room.lastResult = null;
+  for (const p of room.players.values()) p.side = null;
+  if (!room.finalResult) room.finalResult = buildFinalResult(room);
+  return true;
+}
+
+// 내보내기(진행자 전용): 방에서 빼고, 「다시 받기」 전까지 같은 기기는 못 들어온다.
+export function kickPlayer(room, playerId) {
+  const player = room.players.get(playerId);
+  if (!player) return null;
+  room.players.delete(playerId);
+  room.answers.delete(playerId);
+  room.kicked.add(playerId);
+  return player;
+}
+
+// O / X / 아무 데도 아님 — 지금 서 있는 자리 기준 인원 (리모컨의 응답 현황).
+export function zoneCounts(room) {
+  const counts = { O: 0, X: 0, none: 0 };
+  for (const p of room.players.values()) counts[zoneAt(p.motion.pos) ?? 'none'] += 1;
+  return counts;
 }
 
 export function recordAnswer(room, deviceId, choice) {
@@ -580,6 +704,8 @@ export function revealAnswer(room) {
   const q = currentQuestion(room);
   room.status = 'reveal';
   room.deadline = null;
+  room.paused = false;
+  room.remainingMs = null;
   const correctPlayerIds = [];
   for (const [deviceId, player] of room.players) {
     const zone = zoneAt(player.motion.pos);
@@ -598,12 +724,33 @@ export function revealAnswer(room) {
   };
 }
 
-// forHost: true 일 때만 방 PIN 을 담는다 (학생 쪽 스냅샷에는 넣지 않는다).
-export function serializeRoom(room, { forHost = false } = {}) {
+// 누가 보는 스냅샷인지(view)에 따라 담는 값이 다르다.
+//  - 'player'  : 학생. 방 PIN·진행자 비밀번호·정답 없음.
+//  - 'display' : 송출 화면(프로젝터). 방 PIN·입장 주소·음악은 있지만 진행자 비밀번호·정답은 없음.
+//  - 'host'    : 진행자 화면. 방 PIN + 진행자 비밀번호.
+//  - 'remote'  : 선생님 휴대폰 리모컨. host 와 같고, 지금 문제의 정답·해설도 담는다.
+// (forHost: true 는 view: 'host' 의 예전 이름)
+export function serializeRoom(room, { forHost = false, view } = {}) {
+  const v = view || (forHost ? 'host' : 'player');
+  const staff = v === 'host' || v === 'remote';
   const q = currentQuestion(room);
+  let remotes = 0;
+  for (const s of room.hostSockets) if (s.attachments?.get(room.id) === 'remote') remotes += 1;
   return {
     id: room.id,
-    ...(forHost ? { pin: room.pin, hostPassword: room.hostPassword } : {}),
+    ...(staff || v === 'display'
+      ? {
+          pin: room.pin,
+          joinCode: room.joinCode,
+          joinPath: joinPathFor(room, { withPin: true }),
+          joinPathNoPin: joinPathFor(room, { withPin: false }),
+          music: { ...room.music },
+          showQr: room.showQr,
+          displayCount: room.displaySockets.size,
+          remoteCount: remotes,
+        }
+      : {}),
+    ...(staff ? { hostPassword: room.hostPassword, controlKey: room.controlKey, kickedCount: room.kicked.size } : {}),
     churchId: room.churchId,
     title: room.title,
     map: room.map,
@@ -625,7 +772,7 @@ export function serializeRoom(room, { forHost = false } = {}) {
     groupCode: room.groupCode,
     team: serializeTeam(room),
     finalResult: room.status === 'finished' ? room.finalResult : null,
-    hasHost: !!room.hostSocket,
+    hasHost: room.hostSockets.size > 0,
     bounds: MAP_BOUNDS,
     zones: ZONES,
     questionDurationMs: room.questionDurationMs,
@@ -637,6 +784,9 @@ export function serializeRoom(room, { forHost = false } = {}) {
             text: q ? q.text : null,
             category: q ? q.category : null,
             deadline: room.deadline,
+            paused: !!room.paused,
+            remainingMs: room.paused ? room.remainingMs : null,
+            ...(v === 'remote' && q ? { answer: q.answer, explanation: q.explanation ?? null } : {}),
           }
         : null,
     lastResult: room.lastResult,
