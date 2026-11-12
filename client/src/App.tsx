@@ -11,6 +11,7 @@ import { JoinByCode } from './pages/JoinByCode';
 import { DisplayRoom } from './pages/DisplayRoom';
 import { RemoteRoom } from './pages/RemoteRoom';
 import { Legal } from './pages/Legal';
+import { QuestionReview } from './pages/QuestionReview';
 import { ServerWakeNotice } from './components/ServerWakeNotice';
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
       <Route path="/display/:roomId" element={<DisplayRoom />} />
       <Route path="/remote/pair/:pairCode" element={<RemoteRoom />} />
       <Route path="/remote/:codeOrId" element={<RemoteRoom />} />
+      <Route path="/review" element={<QuestionReview />} />
       <Route path="/privacy" element={<Legal tab="privacy" />} />
       <Route path="/terms" element={<Legal tab="terms" />} />
       <Route path="*" element={<Navigate to="/" replace />} />

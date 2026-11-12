@@ -4167,3 +4167,103 @@ button {
 .question-bank-box .fine-print {
   color: var(--text);
 }
+
+/* ---- 문제 신고 · 검토 ---- */
+.question-report-open.quiet {
+  background: transparent;
+  border-color: #c8c0b0;
+  font-size: 0.9em;
+  padding: 4px 10px;
+}
+.question-report-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(16, 21, 34, 0.72);
+}
+.question-report-panel {
+  width: min(440px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.question-report-text {
+  margin: 0;
+  font-weight: 700;
+}
+.question-report-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.question-report-reason {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 2px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+.question-report-reason.on {
+  background: #f5c518;
+  border-color: #1a1a1a;
+}
+.question-report-memo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.question-report-thanks {
+  margin: 0;
+  padding: 8px 10px;
+  background: #e8f6e8;
+  border-left: 4px solid #2e6b3c;
+  font-weight: 600;
+}
+.question-report-staff {
+  margin: 8px 0 0;
+}
+.review-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 20px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.review-login {
+  max-width: 420px;
+  margin: 40px auto;
+}
+.review-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.review-question-text {
+  margin: 0;
+  font-size: 1.15em;
+  font-weight: 700;
+}
+.review-memos {
+  margin: 0;
+  padding-left: 1.2em;
+}
+.review-suggestion {
+  padding: 8px 10px;
+  background: #eef5fb;
+  border-left: 4px solid #1f4e79;
+}
+.review-suggest-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+}

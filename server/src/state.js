@@ -1,5 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { DEFAULT_QUESTION_COUNT, normalizeLevel, questionsForLevel, selectQuizQuestions } from './questions.js';
+import { DEFAULT_QUESTION_COUNT, normalizeLevel, availableQuestionCount, selectQuizQuestions } from './questions.js';
+import { hiddenQuestionIds } from './questionReports.js';
 
 export const QUESTION_DURATION_MS = 15000;
 
@@ -483,8 +484,9 @@ export function setHostPassword(room, password) {
 }
 
 // 문제 수는 그 난이도 문제 은행 크기를 넘을 수 없다 (은행이 18문제면 30을 골라도 18).
+// 은행 크기는 신고로 숨긴 문항을 뺀, 실제로 낼 수 있는 수로 센다.
 export function clampQuestionCount(level, count) {
-  const bank = questionsForLevel(level).length;
+  const bank = availableQuestionCount(level, hiddenQuestionIds());
   const wanted = count ? Math.max(1, Math.round(Number(count)) || DEFAULT_QUESTION_COUNT) : DEFAULT_QUESTION_COUNT;
   return Math.max(1, Math.min(wanted, bank));
 }
@@ -581,7 +583,9 @@ export function startQuiz(room, questionCount) {
   room.remainingMs = null;
   const count = clampQuestionCount(room.level, questionCount || room.questionCount);
   const excludeIds = recentIdsForChurch(room.churchId);
-  room.questions = selectQuizQuestions({ level: room.level, count, excludeIds });
+  // excludeIds = 최근에 낸 문제(약한 제외), hiddenIds = 신고로 숨긴 문제(강한 제외: 모자라도 넣지 않음).
+  // 숨김은 문제를 뽑는 이 시점에만 본다 — 이미 진행 중인 방의 문제는 중간에 빼지 않는다.
+  room.questions = selectQuizQuestions({ level: room.level, count, excludeIds, hiddenIds: hiddenQuestionIds() });
   recordPlayedForChurch(room.churchId, room.questions.map((q) => q.id));
   room.currentIndex = -1;
   room.lastResult = null;
@@ -791,7 +795,28 @@ export function serializeRoom(room, { forHost = false, view } = {}) {
           }
         : null,
     lastResult: room.lastResult,
+    // 진행자 화면·리모컨에만: 직전 문제 (문제 신고에서 "직전 문제"를 고를 때 보여 준다).
+    ...(staff && prevQuestionOf(room) ? { prevQuestion: prevQuestionOf(room) } : {}),
   };
+}
+
+function prevQuestionOf(room) {
+  const i = Math.min(room.currentIndex, room.questions.length) - 1;
+  if (i < 0 || !room.questions[i]) return null;
+  return { index: i, text: room.questions[i].text };
+}
+
+// 문제 신고 대상 확인: 이 방에서 index 번째로 나온 문항을 돌려준다.
+//  - 선생님(host·remote): 지금 문제와 이미 지나간 문제.
+//  - 학생: 정답이 공개된 문제만 (지금 문제는 정답 공개 뒤에만, 지나간 문제는 이미 공개된 것).
+export function questionForReport(room, index, role) {
+  const i = Number(index);
+  if (!Number.isInteger(i) || i < 0 || i >= room.questions.length || i > room.currentIndex) {
+    throw new Error('신고할 문제를 찾을 수 없어요.');
+  }
+  const revealed = i < room.currentIndex || room.status === 'reveal' || room.status === 'finished';
+  if (role !== 'host' && !revealed) throw new Error('정답이 공개된 뒤에만 신고할 수 있어요.');
+  return room.questions[i];
 }
 
 // ---------------------------------------------------------------------------

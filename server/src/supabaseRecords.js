@@ -9,7 +9,8 @@ export function supabaseEnabled() {
   return Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-function request({ method, path, body }) {
+// 같은 스키마(church_game)의 다른 테이블(문제 신고 등)도 이 함수를 쓴다.
+export function request({ method, path, body }) {
   const base = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
   if (!base || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error('Supabase 설정이 없어요.');

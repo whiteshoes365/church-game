@@ -75,6 +75,7 @@ function loadAllQuestions() {
 }
 
 export const ALL_QUESTIONS = loadAllQuestions();
+const NO_IDS = new Set();
 
 export const QUESTIONS_BY_LEVEL = {};
 export const QUESTIONS_BY_LEVEL_CATEGORY = {};
@@ -88,15 +89,28 @@ for (const level of LEVELS) {
 
 // 난이도별 문제 은행 개수 (전체 + 카테고리별). 방 만들기 화면이 실제 개수를 보여 줄 때 쓴다.
 // 반환: { elementary: { total, bible, season, … }, ... } — 항상 로드된 은행에서 센다.
-export function questionBankStats() {
+// hiddenIds: 신고로 숨긴 문항 id 집합. 숨긴 문항은 세지 않는다 (화면 숫자 = 실제로 나올 수 있는 수).
+export function questionBankStats({ hiddenIds = NO_IDS } = {}) {
+  const visible = (list) => (hiddenIds.size === 0 ? list.length : list.filter((q) => !hiddenIds.has(q.id)).length);
   const stats = {};
   for (const level of LEVELS) {
-    stats[level] = { total: QUESTIONS_BY_LEVEL[level].length };
+    stats[level] = { total: visible(QUESTIONS_BY_LEVEL[level]) };
     for (const category of CATEGORIES) {
-      stats[level][category] = QUESTIONS_BY_LEVEL_CATEGORY[level][category].length;
+      stats[level][category] = visible(QUESTIONS_BY_LEVEL_CATEGORY[level][category]);
     }
   }
   return stats;
+}
+
+// 그 난이도에서 실제로 낼 수 있는(숨기지 않은) 문항 수.
+export function availableQuestionCount(level, hiddenIds = NO_IDS) {
+  const pool = QUESTIONS_BY_LEVEL[normalizeLevel(level)];
+  return hiddenIds.size === 0 ? pool.length : pool.filter((q) => !hiddenIds.has(q.id)).length;
+}
+
+const QUESTION_BY_ID = new Map(ALL_QUESTIONS.map((q) => [q.id, q]));
+export function getQuestionById(id) {
+  return QUESTION_BY_ID.get(id) || null;
 }
 
 // 기존 코드와의 호환을 위해 기본(초등) 문항 배열도 그대로 export
@@ -136,10 +150,13 @@ export function categoryCounts(total) {
 // - 어떤 카테고리가 모자라면 다른 카테고리(그리고 최종적으로는 같은 level의 전체 풀)에서
 //   채워 넣어요 (요구사항: "fall back to other categories if a category runs short").
 // - excludeIds에 들어있는 문제는 가능한 한 피하고, 그래도 개수가 모자라면 그제서야 사용해요
-//   (최근에 낸 문제를 교회별로 피하기 위한 용도).
-export function selectQuizQuestions({ level, count = DEFAULT_QUESTION_COUNT, excludeIds = new Set() } = {}) {
+//   (최근에 낸 문제를 교회별로 피하기 위한 용도). → "약한" 제외.
+// - hiddenIds 는 "강한" 제외: 신고로 숨긴 문항이라 은행이 모자라도 절대 넣지 않는다.
+//   카테고리 비율과 모자랄 때 다른 카테고리로 채우는 동작은 숨기지 않은 문항 안에서만 일어난다.
+export function selectQuizQuestions({ level, count = DEFAULT_QUESTION_COUNT, excludeIds = new Set(), hiddenIds = NO_IDS } = {}) {
   const lvl = normalizeLevel(level);
-  const pool = QUESTIONS_BY_LEVEL[lvl];
+  const visible = (list) => (hiddenIds.size === 0 ? list : list.filter((q) => !hiddenIds.has(q.id)));
+  const pool = visible(QUESTIONS_BY_LEVEL[lvl]);
   const total = Math.max(0, Math.min(Math.round(count) || 0, pool.length));
   const desired = categoryCounts(total);
 
@@ -159,7 +176,7 @@ export function selectQuizQuestions({ level, count = DEFAULT_QUESTION_COUNT, exc
 
   let shortfall = 0;
   for (const category of CATEGORIES) {
-    shortfall += takeFrom(QUESTIONS_BY_LEVEL_CATEGORY[lvl][category], desired[category]);
+    shortfall += takeFrom(visible(QUESTIONS_BY_LEVEL_CATEGORY[lvl][category]), desired[category]);
   }
   if (shortfall > 0) {
     takeFrom(pool, shortfall);

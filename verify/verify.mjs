@@ -4,9 +4,23 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import WebSocket from 'ws';
-import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL, CATEGORIES, DEFAULT_QUESTION_COUNT, questionBankStats } from '../server/src/questions.js';
+import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL, CATEGORIES, DEFAULT_QUESTION_COUNT, questionBankStats, getQuestionById, selectQuizQuestions, availableQuestionCount } from '../server/src/questions.js';
 import { ZONES, MAP_BOUNDS, WALK_SPEED, RUN_SPEED, CRAWL_SPEED, GAIT_ACTIVE_MS, GAIT_COOLDOWN_MS } from '../server/src/state.js';
 import * as gameState from '../server/src/state.js';
+import {
+  addQuestionReport,
+  hiddenQuestionIds,
+  applyReviewAction,
+  listReviewItems,
+  exportReviewPatch,
+  checkReviewPassword,
+  reviewPasswordConfigured,
+  reportDeviceHash,
+  _resetQuestionReports,
+  REPORT_HIDE_DEVICE_THRESHOLD,
+  REPORT_MEMO_MAX,
+} from '../server/src/questionReports.js';
+
 import * as records from '../server/src/records.js';
 
 // Question text is unique across all levels (verify looks questions up by
@@ -641,10 +655,11 @@ async function main() {
   verifyGaitUnit();
   verifyPauseUnit();
   await verifyFloorMarks();
+  verifyQuestionReportsUnit();
   log(`starting server on port ${PORT}...`);
   const server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(ROOT, 'server'),
-    env: { ...process.env, PORT: String(PORT), RECORDS_DIR: SERVER_RECORDS_DIR },
+    env: { ...process.env, PORT: String(PORT), RECORDS_DIR: SERVER_RECORDS_DIR, QUESTION_REVIEW_PASSWORD: 'VerifyReviewOnly1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -1618,6 +1633,7 @@ async function main() {
     await verifyGaitRules();
     await verifyDisplayRemote();
     await verifyClientScreens();
+    await verifyQuestionReports();
 
     pinTester.close();
     dup.close();
@@ -1967,6 +1983,7 @@ async function verifyClientScreens() {
   log('--- privacy / home / question-bank screen checks ---');
   const app = fs.readFileSync(path.join(ROOT, 'client/src/App.tsx'), 'utf8');
   assert(app.includes('path="/privacy"') && app.includes('path="/terms"'), 'App에 /privacy·/terms 라우트가 있어야 함');
+  assert(app.includes('path="/review"') && app.includes('<QuestionReview'), 'App에 /review 검토 페이지 라우트가 있어야 함');
   assert(app.includes('path="/"') && app.includes('<PlayerJoin'), 'App 홈(/)은 PlayerJoin이어야 함');
 
   const legal = fs.readFileSync(path.join(ROOT, 'client/src/pages/Legal.tsx'), 'utf8');
@@ -1975,6 +1992,7 @@ async function verifyClientScreens() {
     '실명, 전화번호, 이메일, 생일',
     '광고가 없어요',
     '만 14세 미만',
+    '문제 신고',
     '베타 기간 무료',
     'CONTACT_EMAIL',
     'CONTACT_MAILTO',
@@ -2282,6 +2300,233 @@ async function verifyDisplayRemote() {
 
   for (const c of [host, remote, s1, s2, display2, remote2, hostTurnedDisplay, locked, fresh, stale]) c.close();
   log('display attach without host password, pairing code, remote start/pause/reveal/next/kick/end, music relay, per-socket lock, reconnect keys ok');
+}
+
+
+function verifyQuestionReportsUnit() {
+  log('--- question report unit ---');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'church-reports-unit-'));
+  const prevDir = process.env.RECORDS_DIR;
+  const prevPw = process.env.QUESTION_REVIEW_PASSWORD;
+  process.env.RECORDS_DIR = dir;
+  delete process.env.QUESTION_REVIEW_PASSWORD;
+  _resetQuestionReports();
+  try {
+    assert(REPORT_HIDE_DEVICE_THRESHOLD === 3, '자동 숨김 기준은 기기 3대');
+    assert(REPORT_MEMO_MAX === 200, '메모 상한은 200자');
+    assert(!reviewPasswordConfigured(), '환경 변수가 없으면 검토 비밀번호가 꺼져 있어야 함');
+    assert(!checkReviewPassword('anything'), '꺼진 상태에서는 어떤 비밀번호도 통과하면 안 됨');
+    process.env.QUESTION_REVIEW_PASSWORD = 'UnitReviewOnly1';
+    assert(reviewPasswordConfigured() && checkReviewPassword('UnitReviewOnly1'), '설정한 검토 비밀번호는 통과');
+    assert(!checkReviewPassword('wrong-password') && !checkReviewPassword(''), '틀린·빈 검토 비밀번호는 거절');
+    delete process.env.QUESTION_REVIEW_PASSWORD;
+
+    const bank = QUESTIONS_BY_LEVEL.elementary;
+    assert(bank.length >= 5, '초등 은행이 숨김 검사에 충분해야 함');
+    const qA = bank[0];
+    const qB = bank[1];
+    const qC = bank[2];
+
+    const first = addQuestionReport({ questionId: qA.id, role: 'student', reason: 'typo', memo: '  맞춤법  ', deviceId: 'device-alpha-001' });
+    assert(first.ok && !first.duplicate && !first.hidden, '첫 학생 신고는 저장되고 아직 숨기지 않음');
+    const dup = addQuestionReport({ questionId: qA.id, role: 'student', reason: 'ambiguous', memo: '다시', deviceId: 'device-alpha-001' });
+    assert(!dup.ok && dup.duplicate, '같은 기기가 같은 문항을 두 번 신고하면 거절');
+
+    let memoThrew = false;
+    try {
+      addQuestionReport({ questionId: qA.id, role: 'student', reason: 'other', memo: '가'.repeat(REPORT_MEMO_MAX + 1), deviceId: 'device-beta-002' });
+    } catch (e) {
+      memoThrew = /200자/.test(e.message);
+    }
+    assert(memoThrew, '메모 상한 초과는 거절');
+
+    addQuestionReport({ questionId: qA.id, role: 'student', reason: 'ambiguous', deviceId: 'device-beta-002' });
+    assert(!hiddenQuestionIds().has(qA.id), '학생 2대 신고만으로는 숨기지 않음');
+    const third = addQuestionReport({ questionId: qA.id, role: 'student', reason: 'inappropriate', memo: '불편해요', deviceId: 'device-gamma-003' });
+    assert(third.ok && third.hidden && hiddenQuestionIds().has(qA.id), '학생 3대 신고면 자동 숨김');
+
+    const pickedHidden = selectQuizQuestions({
+      level: 'elementary',
+      count: bank.length,
+      hiddenIds: hiddenQuestionIds(),
+    });
+    assert(pickedHidden.length === availableQuestionCount('elementary', hiddenQuestionIds()), '선정 개수 = 숨기지 않은 은행 수');
+    assert(!pickedHidden.some((q) => q.id === qA.id), '숨긴 문항은 은행이 모자라도 선정되지 않음');
+
+    const hostRep = addQuestionReport({ questionId: qB.id, role: 'host', reason: 'wrong_answer', memo: '답이 반대', deviceId: 'host-device-001' });
+    assert(hostRep.ok && hostRep.hidden && hiddenQuestionIds().has(qB.id), '선생님 1건 신고만으로 숨김');
+
+    const listed = listReviewItems();
+    const itemA = listed.items.find((i) => i.questionId === qA.id);
+    const itemB = listed.items.find((i) => i.questionId === qB.id);
+    assert(itemA && itemA.deviceCount === 3 && itemA.hiddenBy === 'devices' && itemA.hostReported === false, '목록에 3대 기기 숨김이 보임');
+    assert(itemB && itemB.hostReported && itemB.hiddenBy === 'host', '목록에 선생님 신고 숨김이 보임');
+    assert(itemA.memos.every((m) => !('deviceHash' in m) && !('deviceId' in m) && !('nickname' in m)), '검토 목록 메모에 기기값·닉네임이 없음');
+
+    const rawBeforeKeep = fs.readFileSync(path.join(dir, '_question-reports', 'reports.json'), 'utf8');
+    assert(!rawBeforeKeep.includes('device-alpha-001') && !rawBeforeKeep.includes('host-device-001'), '저장 파일에 원문 기기 id가 있으면 안 됨');
+    assert(!/"nickname"\s*:/.test(rawBeforeKeep), '저장 파일에 닉네임 칸이 있으면 안 됨');
+    assert(rawBeforeKeep.includes(reportDeviceHash(qA.id, 'device-alpha-001')), '변환된 기기값만 저장됨');
+
+    applyReviewAction({ questionId: qA.id, action: 'keep' });
+
+    assert(!hiddenQuestionIds().has(qA.id), '유지하면 숨김이 풀림');
+    const pickedAgain = selectQuizQuestions({ level: 'elementary', count: bank.length, hiddenIds: hiddenQuestionIds() });
+    assert(pickedAgain.some((q) => q.id === qA.id), '유지 뒤에는 다시 선정될 수 있음');
+
+    applyReviewAction({ questionId: qB.id, action: 'hide' });
+    assert(hiddenQuestionIds().has(qB.id), '명시 숨김은 유지됨');
+    const stillB = listReviewItems().items.find((i) => i.questionId === qB.id);
+    assert(stillB && stillB.reportCount >= 1 && stillB.hiddenBy === 'review', '숨김은 신고를 비우지 않고 검토 숨김으로 남김');
+
+    applyReviewAction({
+      questionId: qC.id,
+      action: 'suggest',
+      suggestion: { text: '다듬은 문제', answer: 'X', note: '정답을 바꿈' },
+    });
+    const patch = exportReviewPatch();
+    assert(patch.kind === 'church-game-question-review-export', '보내기 파일 형식이 맞음');
+    assert(patch.suggestions.some((s) => s.id === qC.id && s.changes.text === '다듬은 문제' && s.changes.answer === 'X'), '수정 제안이 보내기 파일에 들어감');
+    assert(patch.hidden.some((h) => h.id === qB.id), '숨긴 문항이 보내기 파일에 들어감');
+    assert(getQuestionById(qC.id).text !== '다듬은 문제', '제안 저장이 문항 JSON을 직접 바꾸면 안 됨');
+
+
+    let unknown = false;
+    try {
+      addQuestionReport({ questionId: 'not-a-real-id', role: 'student', reason: 'typo', deviceId: 'device-omega-009' });
+    } catch (e) {
+      unknown = /찾을 수 없어요/.test(e.message);
+    }
+    assert(unknown, '없는 문항 신고는 거절');
+  } finally {
+    _resetQuestionReports();
+    if (prevDir === undefined) delete process.env.RECORDS_DIR;
+    else process.env.RECORDS_DIR = prevDir;
+    if (prevPw === undefined) delete process.env.QUESTION_REVIEW_PASSWORD;
+    else process.env.QUESTION_REVIEW_PASSWORD = prevPw;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  log('question report unit ok');
+}
+
+async function verifyQuestionReports() {
+  log('--- question report flow / hide rule (server) ---');
+  const host = new Client('qr-host');
+  const s1 = new Client('qr-s1');
+  const admin = new Client('qr-admin');
+  const outsider = new Client('qr-outsider');
+  await Promise.all([host.ready(), s1.ready(), admin.ready(), outsider.ready()]);
+
+  host.send('findOrCreateChurch', { name: `신고검증교회-${Date.now()}` });
+  const church = await host.waitFor('churchJoined');
+  const churchId = church.church.id;
+  host.send('createRoom', { pin: TEST_ROOM_PIN, churchId, title: '신고검증방', capacity: 4, level: 'elementary', questionCount: 3 });
+  const created = await host.waitFor('roomCreated', (m) => m.room && m.room.churchId === churchId);
+  const roomId = created.room.id;
+
+  const sid = 'qr-student-device-1';
+  s1.send('joinRoom', { pin: TEST_ROOM_PIN, roomId, deviceId: sid, nickname: '신고학생', avatar: 'circle-blue' });
+  await s1.waitFor('joined');
+
+  host.send('startQuiz', { roomId, questionCount: 1 });
+  const qState = await host.waitFor('roomState', (m) => m.room.status === 'question' && m.room.question);
+  const qIndex = qState.room.question.index;
+  const qText = qState.room.question.text;
+  assert(typeof qIndex === 'number' && qText, '진행자에게 현재 문제가 보여야 함');
+  assert(qState.room.prevQuestion == null, '첫 문제에서는 직전 문제가 없어야 함');
+
+  await expectError(
+    s1,
+    'reportQuestion',
+    { roomId, questionIndex: qIndex, reason: 'typo', memo: '아직', deviceId: sid },
+    /정답이 공개된 뒤에만/,
+    '학생 공개 전 신고',
+  );
+
+  host.send('getQuestionBank');
+  const bankBefore = await host.waitFor('questionBank');
+  const beforeTotal = bankBefore.questionBank.elementary;
+
+  await expectError(
+    outsider,
+    'reportQuestion',
+    { roomId, questionIndex: qIndex, reason: 'typo', deviceId: 'display-device' },
+    /이 화면에서는 문제를 신고할 수 없어요/,
+    '송출·외부 화면 신고',
+  );
+
+  host.send('reveal', { roomId });
+  await s1.waitFor('roomState', (m) => m.room.status === 'reveal');
+
+  s1.send('reportQuestion', { roomId, questionIndex: qIndex, reason: 'typo', memo: '맞춤법', deviceId: sid });
+  const studentOk = await s1.waitFor('questionReportResult', (m) => m.roomId === roomId);
+  assert(studentOk.ok && !studentOk.duplicate, `학생 공개 후 신고 성공: ${JSON.stringify(studentOk)}`);
+
+  s1.send('reportQuestion', { roomId, questionIndex: qIndex, reason: 'ambiguous', deviceId: sid });
+  const studentDup = await s1.waitFor('questionReportResult', (m) => m.roomId === roomId && m.duplicate);
+  assert(!studentDup.ok && studentDup.duplicate, '같은 학생 기기 중복 신고는 거절');
+
+  await expectError(
+    s1,
+    'reportQuestion',
+    { roomId, questionIndex: qIndex, reason: 'other', memo: '나'.repeat(201), deviceId: sid },
+    /200자/,
+    '메모 상한 초과',
+  );
+
+  await expectError(admin, 'reviewList', {}, /검토 비밀번호 확인이 필요/, '로그인 전 검토 목록');
+  await expectError(admin, 'reviewLogin', { password: 'wrong-password' }, /맞지 않아요/, '틀린 검토 비밀번호');
+  await expectError(admin, 'reviewAction', { questionId: 'x', action: 'keep' }, /검토 비밀번호 확인이 필요/, '로그인 전 검토 동작');
+
+  admin.send('reviewLogin', { password: 'VerifyReviewOnly1' });
+  const loggedIn = await admin.waitFor('reviewData', (m) => m.review && Array.isArray(m.review.items));
+  assert(loggedIn.review.items.some((i) => i.question && i.question.text === qText), '검토 목록에 신고한 문항이 묶여 보여야 함');
+
+  const hostId = 'qr-host-device-1';
+  host.send('reportQuestion', { roomId, questionIndex: qIndex, reason: 'wrong_answer', memo: '답이 이상해요', deviceId: hostId });
+  const hostOk = await host.waitFor('questionReportResult', (m) => m.roomId === roomId);
+  assert(hostOk.ok, '선생님 신고 성공');
+
+  host.send('getQuestionBank');
+  const bankHidden = await host.waitFor('questionBank');
+  assert(bankHidden.questionBank.elementary === beforeTotal - 1, `선생님 신고 후 은행이 1 줄어야 함: ${beforeTotal} -> ${bankHidden.questionBank.elementary}`);
+
+  admin.send('reviewList');
+  const listed = await admin.waitFor('reviewData', (m) => m.review.items.some((i) => i.question && i.question.text === qText && i.hidden));
+  const item = listed.review.items.find((i) => i.question && i.question.text === qText);
+  assert(item.hostReported && item.hidden, '선생님 신고 후 숨김으로 표시');
+  const questionId = item.questionId;
+  assert(!JSON.stringify(item).includes(sid) && !JSON.stringify(item).includes('신고학생'), '검토 데이터에 원문 기기 id·닉네임이 없음');
+
+  admin.send('reviewAction', { questionId, action: 'keep' });
+  await admin.waitFor('reviewData', (m) => m.done && m.done.action === 'keep');
+  host.send('getQuestionBank');
+  const bankKept = await host.waitFor('questionBank');
+  assert(bankKept.questionBank.elementary === beforeTotal, `유지 후 은행이 원래 수로 돌아와야 함: ${bankKept.questionBank.elementary}`);
+
+  admin.send('reviewAction', { questionId, action: 'hide' });
+  await admin.waitFor('reviewData', (m) => m.done && m.done.action === 'hide');
+  host.send('getQuestionBank');
+  const bankExplicit = await host.waitFor('questionBank');
+  assert(bankExplicit.questionBank.elementary === beforeTotal - 1, '명시 숨김 후 새 방 은행에서 빠짐');
+
+  admin.send('reviewAction', { questionId, action: 'suggest', suggestion: { note: '나중에 고칠 문제', text: qText } });
+  await admin.waitFor('reviewData', (m) => m.done && m.done.action === 'suggest');
+  admin.send('reviewExport');
+  const exported = await admin.waitFor('reviewExport');
+  assert(exported.export && exported.export.suggestions.some((s) => s.id === questionId), '보내기 파일에 수정 제안이 들어감');
+  assert(exported.export.hidden.some((h) => h.id === questionId), '보내기 파일에 숨긴 문항이 들어감');
+
+  // leave the item hidden? hide would affect later tests in this same server if they create elementary rooms with large counts.
+  // Other tests usually use questionCount 1-3 and exclude is soft except hidden is hard. Hiding one elementary question
+  // should be fine (bank still >> 3). Keep it hidden or keep() to be safe for bank-size assertions elsewhere.
+  // verifyClientScreens already ran (questionBankStats() is in-process full bank, not hidden).
+  // Remaining tests? This is last in main after client screens. Safe either way.
+  admin.send('reviewAction', { questionId, action: 'keep' });
+  await admin.waitFor('reviewData', (m) => m.done && m.done.action === 'keep');
+
+  for (const c of [host, s1, admin, outsider]) c.close();
+  log('question report flow / hide rule ok');
 }
 
 function waitUntil(predicate, timeoutMs) {

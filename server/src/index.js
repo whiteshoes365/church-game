@@ -39,9 +39,20 @@ import {
   normalizeMusic,
   findRoomByJoinCode,
   normalizeJoinCode,
+  questionForReport,
 } from './state.js';
 import { randomInt } from 'node:crypto';
-import { LEVELS, QUESTIONS_BY_LEVEL, questionBankStats } from './questions.js';
+import { LEVELS, questionBankStats } from './questions.js';
+import {
+  addQuestionReport,
+  hiddenQuestionIds,
+  preloadQuestionReports,
+  checkReviewPassword,
+  reviewPasswordConfigured,
+  listReviewItems,
+  applyReviewAction,
+  exportReviewPatch,
+} from './questionReports.js';
 import {
   openGroup,
   normalizeCode,
@@ -61,9 +72,14 @@ import {
 } from './records.js';
 
 const PORT = Number(process.env.PORT) || 8787;
-const QUESTION_BANK = Object.fromEntries(LEVELS.map((level) => [level, QUESTIONS_BY_LEVEL[level].length]));
 // 난이도별 { total, bible, season, … } — 방 만들기 화면(호스트·송출 PC)이 실제 은행 개수를 보여 준다.
-const QUESTION_BANK_DETAIL = questionBankStats();
+// 신고로 숨긴 문항은 빼고 센다 (화면 숫자 = 새 방에 실제로 나올 수 있는 수). 물어볼 때마다 다시 센다.
+function questionBankPayload() {
+  const questionBankDetail = questionBankStats({ hiddenIds: hiddenQuestionIds() });
+  const questionBank = Object.fromEntries(LEVELS.map((level) => [level, questionBankDetail[level].total]));
+  return { questionBank, questionBankDetail };
+}
+preloadQuestionReports();
 const POSITIONS_BROADCAST_MS = 80; // ~12.5 Hz, within the 10-15 Hz target
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
@@ -197,6 +213,46 @@ function checkHostAccess(socket, room, msg) {
   bumpFail(socket.hostFails);
   throw new Error(socket.hostFails.lockedUntil > now ? HOST_LOCK_MESSAGE : HOST_FAIL_MESSAGE);
 }
+
+// ---- 문제 검토(관리자) 비밀번호 ----
+// 비밀번호는 서버 환경 변수 QUESTION_REVIEW_PASSWORD 에만 있다. 비어 있으면 로그인·액션 모두 실패한다.
+// 진행자 비밀번호처럼 5번 틀리면 30초 잠근다. 접속(소켓)마다, 그리고 접속을 새로 열어 우회하지 못하게
+// 보낸 주소마다 센다 (주소는 메모리에서 세기만 하고 어디에도 저장하지 않는다).
+const REVIEW_LOCK_MESSAGE = '검토 비밀번호를 여러 번 틀렸어요. 30초 뒤에 다시 시도해 주세요.';
+const REVIEW_FAIL_MESSAGE = '검토 비밀번호가 맞지 않아요.';
+const REVIEW_CLOSED_MESSAGE = '검토 기능이 꺼져 있어요. 서버에 검토 비밀번호(환경 변수)를 먼저 설정해 주세요.';
+const reviewFailsByAddr = new Map(); // 주소 -> { count, lockedUntil }
+
+function reviewLogin(socket, password) {
+  socket.reviewAuth = false;
+  if (!reviewPasswordConfigured()) throw new Error(REVIEW_CLOSED_MESSAGE);
+  const now = Date.now();
+  for (const [addr, f] of reviewFailsByAddr) if (f.lockedUntil <= now && f.count === 0) reviewFailsByAddr.delete(addr);
+  let byAddr = reviewFailsByAddr.get(socket.remoteAddr);
+  if (!byAddr) reviewFailsByAddr.set(socket.remoteAddr, (byAddr = { count: 0, lockedUntil: 0 }));
+  if (socket.reviewFails.lockedUntil > now || byAddr.lockedUntil > now) throw new Error(REVIEW_LOCK_MESSAGE);
+  if (checkReviewPassword(password)) {
+    socket.reviewFails.count = 0;
+    byAddr.count = 0;
+    socket.reviewAuth = true;
+    return;
+  }
+  bumpFail(socket.reviewFails);
+  bumpFail(byAddr);
+  throw new Error(socket.reviewFails.lockedUntil > now || byAddr.lockedUntil > now ? REVIEW_LOCK_MESSAGE : REVIEW_FAIL_MESSAGE);
+}
+
+function requireReviewAuth(socket) {
+  if (!reviewPasswordConfigured()) {
+    socket.reviewAuth = false;
+    throw new Error(REVIEW_CLOSED_MESSAGE);
+  }
+  if (!socket.reviewAuth) throw new Error('검토 비밀번호 확인이 필요해요.');
+}
+
+// 문제 신고는 접속 하나가 짧은 시간에 너무 많이 보내지 못하게 한다.
+const REPORT_BURST_MAX = 10;
+const REPORT_BURST_MS = 60000;
 
 // 홈 화면 상점에서 산/착용한 아이템을, 그 친구가 지금 들어가 있는 방 캐릭터에도 바로 반영한다.
 function syncCosmeticsToRooms(code, key, equipped) {
@@ -382,8 +438,13 @@ setInterval(() => {
   }
 }, 1000);
 
-wss.on('connection', (socket) => {
+wss.on('connection', (socket, req) => {
   socket.meta = { roomId: null, deviceId: null, role: null };
+  // 검토 비밀번호 잠금용 (메모리에서만 쓴다. 신고·기록에는 저장하지 않는다).
+  socket.remoteAddr = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim() || req?.socket?.remoteAddress || 'unknown';
+  socket.reviewAuth = false; // 검토 비밀번호를 통과한 접속인지
+  socket.reviewFails = { count: 0, lockedUntil: 0 };
+  socket.reportTimes = []; // 최근 신고 시각 (도배 방지)
   socket.attachments = new Map(); // roomId -> 'host' | 'remote' | 'display'
   socket.pairCode = null; // 송출 화면 연결을 기다리는 중이면 그 코드
   socket.groupAuth = new Set(); // 이 소켓이 교사 PIN 으로 연 반 코드들
@@ -452,13 +513,13 @@ function handleMessage(socket, msg) {
       if (!church) throw new Error('교회를 찾을 수 없어요.');
       const rooms = listRooms(msg.churchId).map(serializeRoomSummary);
       // questionBank: 난이도별 문제 은행 크기 (방 만들기 화면이 문제 수 선택지를 여기에 맞춘다)
-      send(socket, 'roomList', { churchId: msg.churchId, rooms, questionBank: QUESTION_BANK, questionBankDetail: QUESTION_BANK_DETAIL });
+      send(socket, 'roomList', { churchId: msg.churchId, rooms, ...questionBankPayload() });
       break;
     }
 
     // 방을 만들기 전(교회를 아직 모르는 송출 PC 등)에도 은행 개수를 물어볼 수 있다.
     case 'getQuestionBank': {
-      send(socket, 'questionBank', { questionBank: QUESTION_BANK, questionBankDetail: QUESTION_BANK_DETAIL });
+      send(socket, 'questionBank', questionBankPayload());
       break;
     }
 
@@ -820,6 +881,70 @@ function handleMessage(socket, msg) {
       send(socket, 'shopData', { shop: state });
       syncCosmeticsToRooms(code, key, state.equipped);
       pushGroup(code);
+      break;
+    }
+
+    // ---- 문제 신고 ----
+    // 선생님(진행자 화면·리모컨): 지금 문제 또는 지나간 문제. 학생: 정답이 공개된 문제만. 송출 화면: 불가.
+    // 닉네임·방·교회·원문 기기 id 는 저장하지 않는다 (questionReports.js).
+    case 'reportQuestion': {
+      const room = getRoom(msg.roomId);
+      if (!room) throw new Error('방을 찾을 수 없어요.');
+      let role;
+      let deviceId;
+      if (room.hostSockets.has(socket)) {
+        role = 'host';
+        deviceId = msg.deviceId;
+      } else if (socket.meta.role === 'player' && socket.meta.roomId === room.id && room.players.has(socket.meta.deviceId)) {
+        role = 'student';
+        deviceId = socket.meta.deviceId; // 학생은 입장할 때 확인된 기기값만 쓴다
+      } else {
+        throw new Error('이 화면에서는 문제를 신고할 수 없어요.');
+      }
+      const question = questionForReport(room, msg.questionIndex, role);
+      const now = Date.now();
+      socket.reportTimes = socket.reportTimes.filter((t) => now - t < REPORT_BURST_MS);
+      if (socket.reportTimes.length >= REPORT_BURST_MAX) throw new Error('신고를 너무 많이 보냈어요. 잠시 뒤에 다시 시도해 주세요.');
+      const result = addQuestionReport({ questionId: question.id, role, reason: msg.reason, memo: msg.memo, deviceId, now });
+      if (result.ok) socket.reportTimes.push(now);
+      send(socket, 'questionReportResult', {
+        roomId: room.id,
+        questionIndex: Number(msg.questionIndex),
+        ok: result.ok,
+        duplicate: result.duplicate,
+        message: result.duplicate ? '이 기기에서 이미 신고한 문제예요. 한 문제는 한 번만 신고할 수 있어요.' : '신고를 보냈어요. 고마워요!',
+      });
+      break;
+    }
+
+    // ---- 문제 검토 (관리자 비밀번호) ----
+    case 'reviewLogin': {
+      reviewLogin(socket, msg.password);
+      send(socket, 'reviewData', { review: listReviewItems({ refresh: true }) });
+      break;
+    }
+
+    case 'reviewList': {
+      requireReviewAuth(socket);
+      send(socket, 'reviewData', { review: listReviewItems({ refresh: true }) });
+      break;
+    }
+
+    case 'reviewAction': {
+      requireReviewAuth(socket);
+      applyReviewAction({ questionId: msg.questionId, action: msg.action, suggestion: msg.suggestion });
+      send(socket, 'reviewData', { review: listReviewItems(), done: { questionId: msg.questionId, action: msg.action } });
+      break;
+    }
+
+    case 'reviewExport': {
+      requireReviewAuth(socket);
+      send(socket, 'reviewExport', { export: exportReviewPatch() });
+      break;
+    }
+
+    case 'reviewLogout': {
+      socket.reviewAuth = false;
       break;
     }
 

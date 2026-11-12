@@ -16,6 +16,7 @@ import {
   ScoreList,
   TeamBoard,
 } from '../components/RoomStage';
+import { StaffQuestionReports } from '../components/QuestionReport';
 import { displayUrl, joinQrUrl, joinTextUrl, remoteUrl } from '../joinLink';
 import { useQuestionClock } from '../roomTime';
 import { useRoomMusic } from '../useRoomMusic';
@@ -237,6 +238,12 @@ export function HostRoom() {
       {error && <p className="form-error form-error-banner">{error}</p>}
 
       <QuestionBanners room={room} now={now} />
+
+      <StaffQuestionReports
+        roomId={room.id}
+        current={room.question?.text ? { index: room.question.index, text: room.question.text } : null}
+        prev={room.prevQuestion ?? null}
+      />
 
       <div className="host-main">
         <div className="map-column">

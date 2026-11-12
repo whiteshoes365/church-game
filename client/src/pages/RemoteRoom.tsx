@@ -13,6 +13,7 @@ import type { PlayerSnapshot, RoomSnapshot } from '../protocol';
 import { questionLeftMs, useQuestionClock } from '../roomTime';
 import { useRoomMusic } from '../useRoomMusic';
 import { gameSocket } from '../ws';
+import { StaffQuestionReports } from '../components/QuestionReport';
 
 type ZoneCounts = { O: number; X: number; none: number };
 
@@ -340,6 +341,12 @@ export function RemoteRoom() {
             )}
           </section>
         )}
+
+        <StaffQuestionReports
+          roomId={room.id}
+          current={q?.text ? { index: q.index, text: q.text } : null}
+          prev={room.prevQuestion ?? null}
+        />
 
         {/* 음악 · QR 표시 */}
         <section className="card stack remote-card">
