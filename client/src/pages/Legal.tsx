@@ -1,15 +1,27 @@
 // 개인정보처리방침 · 이용 안내 (한 페이지, 탭 두 개). 라우트: /#/privacy, /#/terms
-// 실제 동작과 다르게 쓰지 않는다. 문의 연락처는 정해지기 전까지 "베타 안내에서 공개"로만 둔다.
+// 실제 동작과 다르게 쓰지 않는다. 문의는 CONTACT_EMAIL(mailto)로 받는다.
 import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { CONTACT_EMAIL, CONTACT_MAILTO } from '../contact';
 
 const UPDATED = '2026년 11월 12일';
+
+function ContactLink() {
+  return (
+    <a href={CONTACT_MAILTO} className="legal-mailto">
+      {CONTACT_EMAIL}
+    </a>
+  );
+}
 
 function Privacy() {
   return (
     <article className="legal-body">
       <p className="legal-lead">
         교회학교 게임 플랫폼(베타)은 수업 시간에 쓰는 OX 퀴즈 도구예요. 꼭 필요한 정보만 다루고, 무엇을 다루는지 아래에 그대로 적었어요.
+      </p>
+      <p>
+        <b>베타 기간 무료:</b> 베타 기간에는 결제나 유료 기능이 없고, 서버도 무료로 운영해요.
       </p>
 
       <h2>1. 학생은 계정을 만들지 않아요</h2>
@@ -58,12 +70,16 @@ function Privacy() {
       <h2>8. 삭제·정정</h2>
       <ul>
         <li>선생님이 반 장부에서 출석 취소, 달란트 정정, 닉네임과 기기의 연결 해제를 직접 할 수 있어요.</li>
-        <li>한 학생의 기록 전체 삭제처럼 장부에서 바로 할 수 없는 것은, 문의 채널이 공개되면 운영자에게 요청할 수 있어요.</li>
+        <li>
+          한 학생의 기록 전체 삭제처럼 장부에서 바로 할 수 없는 것은 <ContactLink />로 운영자에게 요청할 수 있어요.
+        </li>
         <li>기기에 저장된 값은 브라우저의 사이트 데이터 삭제로 지울 수 있어요.</li>
       </ul>
 
       <h2>9. 문의</h2>
-      <p>문의 채널은 베타 안내에서 공개해요.</p>
+      <p>
+        문의는 <ContactLink />로 보내 주세요.
+      </p>
 
       <p className="legal-updated">시행일: {UPDATED} (베타). 내용이 바뀌면 이 페이지에 알려요.</p>
     </article>
@@ -97,6 +113,7 @@ function Terms() {
 
       <h2>4. 베타 서비스</h2>
       <ul>
+        <li>베타 기간에는 결제나 유료 기능이 없고 무료로 쓸 수 있어요. 서버도 무료로 운영해요.</li>
         <li>기능과 화면이 예고 없이 바뀌거나 잠시 멈출 수 있어요.</li>
         <li>한동안 안 쓰던 서버는 첫 접속에 최대 1분 정도 걸릴 수 있어요.</li>
         <li>반이 연결되지 않은 방의 점수는 방이 닫히면 남지 않아요.</li>
@@ -108,7 +125,9 @@ function Terms() {
       </p>
 
       <h2>6. 문의</h2>
-      <p>문의 채널은 베타 안내에서 공개해요.</p>
+      <p>
+        문의는 <ContactLink />로 보내 주세요.
+      </p>
 
       <p className="legal-updated">안내일: {UPDATED} (베타)</p>
     </article>

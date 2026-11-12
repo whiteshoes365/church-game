@@ -1,5 +1,16 @@
 # RESULT
 
+## 베타 콘텐츠 보강 (2026-11-12, 브랜치 `chore/beta-content`)
+
+- **기반**: `origin/feat/beta-review` (`4b9b983`). 이 브랜치에만 커밋·push. main 병합·배포·운영 Supabase 접근 없음.
+- **검증**: `npm run build` 통과. `env -u SUPABASE_URL -u SUPABASE_ANON_KEY -u SUPABASE_SERVICE_ROLE_KEY npm run verify` → ALL CHECKS PASSED.
+- **문제 은행**: `2026-46.json` 추가. 주제 `bible|season|nature|korean|current|nonsense`. 난이도별 합계 초등 32 · 중등 39 · 고등 36 · 청년 35 (각 ≥25).
+- **UI**: 잘못된 입장 코드 후 입력값 유지, 송출 시작 화면 스크롤 안내(잘릴 때), 은행 개수에 주제별 표시.
+- **verify**: 방침·홈·은행 화면 소스 검사 추가, 은행 집계·최소 25문제 검사 보강.
+- **문의·무료**: 공개 문의 `whiteshoes365@mail.grokbot.com`(mailto). 방침에 「베타 기간 무료」(결제·유료 기능 없음, 서버 무료 운영) 한 줄.
+
+---
+
 ## 베타 출시 전 검토 반영 (2026-11-12, 브랜치 `feat/beta-review`)
 
 - **기반**: main `cc2f4ce`에서 분기. 이 브랜치에만 로컬 커밋했습니다. push·main 병합·운영 배포·운영 Supabase 접근은 하지 않았습니다. `퀴즈검토_176문제.xlsx`는 건드리지 않았고 커밋에 없습니다.

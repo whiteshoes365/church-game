@@ -1,7 +1,7 @@
 // 학생 첫 화면. 1순위는 "방 코드로 입장" — 송출 화면에 보이는 입장 코드와 방 PIN.
 // 교회 이름 검색은 접어 두고, 여기서는 교회를 새로 만들 수 없다 (만들기는 호스트 화면에서만).
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import type { ChurchRef } from '../protocol';
 import { parseJoinInput } from '../joinLink';
@@ -9,10 +9,14 @@ import { LegalFooter } from '../components/LegalFooter';
 
 const MIN_CODE_LENGTH = 4;
 
+type JoinPrefill = { codePrefill?: string; pinPrefill?: string };
+
 export function PlayerJoin() {
   const navigate = useNavigate();
-  const [codeInput, setCodeInput] = useState('');
-  const [pin, setPin] = useState('');
+  const location = useLocation();
+  const prefill = (location.state as JoinPrefill | null) ?? null;
+  const [codeInput, setCodeInput] = useState(() => prefill?.codePrefill ?? '');
+  const [pin, setPin] = useState(() => (prefill?.pinPrefill && /^\d{4}$/.test(prefill.pinPrefill) ? prefill.pinPrefill : ''));
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<ChurchRef[]>([]);
   const [searched, setSearched] = useState('');

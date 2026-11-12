@@ -4,7 +4,7 @@
 // 각 문항: { id, level, category, text, answer, explanation, ref?, week }
 //   - id: 전체 문항 뱅크에서 고유한 안정적인 문자열 id
 //   - level: 'elementary' | 'middle' | 'high' | 'youth'
-//   - category: 'bible' | 'nonsense'
+//   - category: 'bible' | 'season' | 'nature' | 'korean' | 'current' | 'nonsense'
 //   - answer: 'O' | 'X'
 //   - ref: 성경 출처(장:절) — category가 'bible'이면 필수
 //   - week: 해당 문항이 추가된 주차 (YYYY-WW)
@@ -28,17 +28,28 @@ export const LEVEL_LABELS = {
 
 export const DEFAULT_LEVEL = 'elementary';
 
-export const CATEGORIES = ['bible', 'nonsense'];
+export const CATEGORIES = ['bible', 'season', 'nature', 'korean', 'current', 'nonsense'];
 
 export const CATEGORY_LABELS = {
   bible: '성경',
+  season: '교회절기',
+  nature: '몸·자연',
+  korean: '우리말',
+  current: '시사',
   nonsense: '넌센스',
 };
 
 // 호스트가 방을 만들 때 고를 수 있는 문제 수와, 카테고리를 섞는 기본 비율.
-// 30문제 기준 대략 성경 27 / 넌센스 3에 맞춰져 있어요.
+// 성경을 많이 두고, 절기·자연·우리말·시사·넌센스를 조금씩 섞어요.
 export const DEFAULT_QUESTION_COUNT = 30;
-export const CATEGORY_RATIOS = { bible: 0.9, nonsense: 0.1 };
+export const CATEGORY_RATIOS = {
+  bible: 0.7,
+  season: 0.08,
+  nature: 0.06,
+  korean: 0.06,
+  current: 0.05,
+  nonsense: 0.05,
+};
 
 function loadAllQuestions() {
   const files = fs.existsSync(DATA_DIR)
@@ -76,7 +87,7 @@ for (const level of LEVELS) {
 }
 
 // 난이도별 문제 은행 개수 (전체 + 카테고리별). 방 만들기 화면이 실제 개수를 보여 줄 때 쓴다.
-// 반환: { elementary: { total, bible, nonsense }, ... } — 항상 로드된 은행에서 센다.
+// 반환: { elementary: { total, bible, season, … }, ... } — 항상 로드된 은행에서 센다.
 export function questionBankStats() {
   const stats = {};
   for (const level of LEVELS) {

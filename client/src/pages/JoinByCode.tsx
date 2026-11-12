@@ -47,7 +47,17 @@ export function JoinByCode() {
         {error ? (
           <>
             <p className="form-error join-error">{error}</p>
-            <button className="btn btn-primary" onClick={() => navigate('/')}>
+            <button
+              className="btn btn-primary"
+              onClick={() =>
+                navigate('/', {
+                  state: {
+                    codePrefill: code,
+                    pinPrefill: /^\d{4}$/.test(pinPrefill) ? pinPrefill : undefined,
+                  },
+                })
+              }
+            >
               방 코드 다시 넣기
             </button>
           </>

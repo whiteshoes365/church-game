@@ -62,7 +62,7 @@ import {
 
 const PORT = Number(process.env.PORT) || 8787;
 const QUESTION_BANK = Object.fromEntries(LEVELS.map((level) => [level, QUESTIONS_BY_LEVEL[level].length]));
-// 난이도별 { total, bible, nonsense } — 방 만들기 화면(호스트·송출 PC)이 실제 은행 개수를 보여 준다.
+// 난이도별 { total, bible, season, … } — 방 만들기 화면(호스트·송출 PC)이 실제 은행 개수를 보여 준다.
 const QUESTION_BANK_DETAIL = questionBankStats();
 const POSITIONS_BROADCAST_MS = 80; // ~12.5 Hz, within the 10-15 Hz target
 

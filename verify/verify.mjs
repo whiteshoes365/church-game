@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import WebSocket from 'ws';
-import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL, CATEGORIES, DEFAULT_QUESTION_COUNT } from '../server/src/questions.js';
+import { QUESTIONS_BY_LEVEL, LEVELS, DEFAULT_LEVEL, CATEGORIES, DEFAULT_QUESTION_COUNT, questionBankStats } from '../server/src/questions.js';
 import { ZONES, MAP_BOUNDS, WALK_SPEED, RUN_SPEED, CRAWL_SPEED, GAIT_ACTIVE_MS, GAIT_COOLDOWN_MS } from '../server/src/state.js';
 import * as gameState from '../server/src/state.js';
 import * as records from '../server/src/records.js';
@@ -695,15 +695,15 @@ async function main() {
       assert(emptyResult.churches.length === 0, `빈 검색어(${JSON.stringify(emptyQuery)})에는 교회가 하나도 나오면 안 됨`);
     }
 
-    // 문제 은행 개수: 서버가 실제 데이터 파일에서 센 값(전체, 성경/넌센스)을 방 만들기 화면에 준다
+    // 문제 은행 개수: 서버가 실제 데이터 파일에서 센 값(전체·주제별)을 방 만들기 화면에 준다
     {
       const dataDir = path.join(ROOT, 'server', 'data', 'questions');
       const expected = {};
       for (const file of fs.readdirSync(dataDir).filter((f) => f.endsWith('.json'))) {
         for (const q of JSON.parse(fs.readFileSync(path.join(dataDir, file), 'utf8'))) {
-          expected[q.level] ??= { total: 0, bible: 0, nonsense: 0 };
+          expected[q.level] ??= { total: 0, ...Object.fromEntries(CATEGORIES.map((c) => [c, 0])) };
           expected[q.level].total += 1;
-          expected[q.level][q.category] += 1;
+          expected[q.level][q.category] = (expected[q.level][q.category] ?? 0) + 1;
         }
       }
       host.send('getQuestionBank');
@@ -711,14 +711,19 @@ async function main() {
       host.send('listRooms', { churchId });
       const listMsg = await host.waitFor('roomList', (m) => m.churchId === churchId);
       for (const level of ['elementary', 'middle', 'high', 'youth']) {
-        const want = expected[level] ?? { total: 0, bible: 0, nonsense: 0 };
+        const want = expected[level] ?? { total: 0, ...Object.fromEntries(CATEGORIES.map((c) => [c, 0])) };
+        assert(want.total >= 25, `${level} 문제 은행은 최소 25문제 이상이어야 함 (지금 ${want.total})`);
         for (const [label, detail] of [['getQuestionBank', bankMsg.questionBankDetail], ['roomList', listMsg.questionBankDetail]]) {
           assert(detail && detail[level], `${label}: ${level} 은행 개수가 있어야 함`);
-          assert(
-            detail[level].total === want.total && detail[level].bible === want.bible && detail[level].nonsense === want.nonsense,
-            `${label}: ${level} 은행 개수가 데이터 파일과 같아야 함 (받음 ${JSON.stringify(detail[level])}, 기대 ${JSON.stringify(want)})`,
-          );
-          assert(detail[level].bible + detail[level].nonsense === detail[level].total, `${label}: ${level} 성경+넌센스 = 전체`);
+          assert(detail[level].total === want.total, `${label}: ${level} 전체 수가 데이터 파일과 같아야 함`);
+          for (const cat of CATEGORIES) {
+            assert(
+              (detail[level][cat] ?? 0) === (want[cat] ?? 0),
+              `${label}: ${level}/${cat} 개수가 데이터 파일과 같아야 함 (받음 ${detail[level][cat]}, 기대 ${want[cat]})`,
+            );
+          }
+          const catSum = CATEGORIES.reduce((n, c) => n + (detail[level][c] ?? 0), 0);
+          assert(catSum === detail[level].total, `${label}: ${level} 주제 합 = 전체`);
         }
         assert(bankMsg.questionBank[level] === want.total, `${level} questionBank(전체 수)도 같은 값이어야 함`);
       }
@@ -1085,16 +1090,16 @@ async function main() {
       return seen;
     }
 
-    // 7a. 기본(30문제) 게임: 카테고리가 모두 채워져 있고, 뱅크에 넌센스가 있으면 비율이
-    // 대략 90/10에 맞고 없으면 전부 성경이어야 하며, 뱅크가 요청한 수보다 작으면 에러 없이
+    // 7a. 기본(30문제) 게임: 카테고리가 유효하고, 뱅크가 요청한 수보다 작으면 에러 없이
     // 뱅크 전체를 그대로(중복 없이) 다 써야 함. 모두 선택한 level 소속이어야 함.
+    // 비성경 주제가 뱅크에 있으면 한 게임에도 적어도 한 문제는 섞여야 함(비율은 뱅크 크기에 따라 유동).
     host4.send('createRoom', { pin: TEST_ROOM_PIN, churchId: church4Id, title: '카테고리방', map: 'sanctuary', capacity: 'unlimited', level: 'elementary' });
     const catRoom = await host4.waitFor('roomCreated');
     const catRoomId = catRoom.room.id;
     assert(catRoom.room.level === 'elementary', '카테고리 검증방의 level이 elementary여야 함');
 
     const elemPoolSize = QUESTIONS_BY_LEVEL.elementary.length;
-    const elemNonsenseCount = QUESTIONS_BY_LEVEL.elementary.filter((q) => q.category === 'nonsense').length;
+    const elemNonBible = QUESTIONS_BY_LEVEL.elementary.filter((q) => q.category !== 'bible').length;
     const expectedGame1Length = Math.min(DEFAULT_QUESTION_COUNT, elemPoolSize);
 
     const game1 = await playFullGame(host4, catRoomId); // questionCount 생략 -> 기본값
@@ -1111,20 +1116,16 @@ async function main() {
     const game1Texts = game1.map((q) => q.text);
     assert(new Set(game1Texts).size === game1Texts.length, '한 게임 안에서 같은 문제가 중복 출제되면 안 됨');
 
-    const game1Counts = { bible: 0, nonsense: 0 };
+    const game1Counts = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
     for (const q of game1) game1Counts[q.category] += 1;
     log(`question mix (bank size ${elemPoolSize}): ${JSON.stringify(game1Counts)}`);
-    if (elemNonsenseCount === 0) {
-      assert(game1Counts.nonsense === 0, `뱅크에 넌센스 문항이 없으면 넌센스는 0개여야 하는데 ${game1Counts.nonsense}개`);
-      assert(game1Counts.bible === game1.length, `뱅크에 넌센스 문항이 없으면 전부 성경이어야 하는데 성경 ${game1Counts.bible}/${game1.length}개`);
+    if (elemNonBible === 0) {
+      assert(game1Counts.bible === game1.length, `뱅크에 비성경 문항이 없으면 전부 성경이어야 하는데 성경 ${game1Counts.bible}/${game1.length}개`);
     } else {
-      const expectedNonsense = Math.round(game1.length * 0.1);
-      assert(
-        Math.abs(game1Counts.nonsense - expectedNonsense) <= 2,
-        `넌센스 비율은 대략 10%(≈${expectedNonsense}개)여야 하는데 ${game1Counts.nonsense}개`,
-      );
+      const mixed = game1.filter((q) => q.category !== 'bible').length;
+      assert(mixed >= 1, `뱅크에 비성경 문항이 있으면 게임에 적어도 1개는 섞여야 함 (지금 ${mixed})`);
     }
-    log('category presence + ~90/10 mixing ratio (or all-bible fallback when no nonsense) + level sourcing + no-repeats-in-game all ok');
+    log('category presence + mixed topics (or all-bible fallback) + level sourcing + no-repeats-in-game all ok');
 
     // 7b. 같은 교회에서 연속으로 게임을 돌리면, 문제 뱅크가 허락하는 한 최근에 나온 문제를
     // 피해서 출제해야 함. 각 게임의 문제 수는 뱅크 크기에 맞춰 동적으로 계산해서(두 게임을
@@ -1615,6 +1616,7 @@ async function main() {
     await verifyGuideFindings();
     await verifyGaitRules();
     await verifyDisplayRemote();
+    await verifyClientScreens();
 
     pinTester.close();
     dup.close();
@@ -1854,6 +1856,66 @@ function verifyPauseUnit() {
   assert(JSON.stringify(gameState.normalizeMusic({ track: 'nope', volume: 7, enabled: 'yes' })) === JSON.stringify({ track: 'upbeat', enabled: true, volume: 1 }), '음악: 모르는 곡은 무시, 소리 크기는 0~1');
   assert(gameState.normalizeMusic({ track: 'march', enabled: false, volume: 0.55 }).track === 'march', '음악: 아는 곡은 반영');
   log('pause/resume math, early end with empty-result finalResult, snapshot views (player < display < host < remote), music normalize ok');
+}
+
+// 화면 소스(개인정보 방침·학생 홈·문제은행 개수 표시)가 빠지지 않았는지 점검한다.
+// 브라우저를 띄우지 않고 라우트·문구·컴포넌트를 파일에서 확인한다.
+async function verifyClientScreens() {
+  log('--- privacy / home / question-bank screen checks ---');
+  const app = fs.readFileSync(path.join(ROOT, 'client/src/App.tsx'), 'utf8');
+  assert(app.includes('path="/privacy"') && app.includes('path="/terms"'), 'App에 /privacy·/terms 라우트가 있어야 함');
+  assert(app.includes('path="/"') && app.includes('<PlayerJoin'), 'App 홈(/)은 PlayerJoin이어야 함');
+
+  const legal = fs.readFileSync(path.join(ROOT, 'client/src/pages/Legal.tsx'), 'utf8');
+  for (const phrase of [
+    '학생은 계정을 만들지 않아요',
+    '실명, 전화번호, 이메일, 생일',
+    '광고가 없어요',
+    '만 14세 미만',
+    '베타 기간 무료',
+    'CONTACT_EMAIL',
+    'CONTACT_MAILTO',
+  ]) {
+    assert(legal.includes(phrase), `개인정보처리방침·이용안내에 "${phrase}" 문구가 있어야 함`);
+  }
+  assert(!legal.includes('베타 안내에서 공개'), '문의처가 비어 있다는 문구는 남아 있으면 안 됨');
+  assert(legal.includes("tab === 'privacy'") && legal.includes("tab === 'terms'"), '방침·이용안내 탭이 있어야 함');
+
+  const contact = fs.readFileSync(path.join(ROOT, 'client/src/contact.ts'), 'utf8');
+  assert(
+    contact.includes("CONTACT_EMAIL = 'whiteshoes365@mail.grokbot.com'") && contact.includes('mailto:${CONTACT_EMAIL}'),
+    'contact.ts에 공개 문의 이메일·mailto가 있어야 함',
+  );
+
+  const footer = fs.readFileSync(path.join(ROOT, 'client/src/components/LegalFooter.tsx'), 'utf8');
+  assert(footer.includes('to="/privacy"') && footer.includes('개인정보처리방침'), '바닥글에 방침 링크가 있어야 함');
+  assert(footer.includes('CONTACT_MAILTO') && footer.includes('CONTACT_EMAIL'), '바닥글에 문의 mailto 링크가 있어야 함');
+  assert(!footer.includes('베타 안내에서 공개'), '바닥글에 문의처 미정 문구가 있으면 안 됨');
+
+  const home = fs.readFileSync(path.join(ROOT, 'client/src/pages/PlayerJoin.tsx'), 'utf8');
+  assert(home.includes('방 코드로 입장') && home.includes('id="join-code"'), '학생 홈에 방 코드 입장 카드가 있어야 함');
+  assert(home.includes('codePrefill') && home.includes('location.state'), '잘못된 입장 코드 후 입력값이 남도록 prefill을 받아야 함');
+  assert(home.includes('LegalFooter') && !/findOrCreateChurch/.test(home), '학생 홈은 방침 링크가 있고 교회를 만들지 않아야 함');
+
+  const joinByCode = fs.readFileSync(path.join(ROOT, 'client/src/pages/JoinByCode.tsx'), 'utf8');
+  assert(joinByCode.includes('codePrefill') && joinByCode.includes("navigate('/',"), '입장 실패 시 홈으로 가며 codePrefill을 넘겨야 함');
+
+  const bankNote = fs.readFileSync(path.join(ROOT, 'client/src/components/QuestionBankNote.tsx'), 'utf8');
+  assert(bankNote.includes('문제 은행: 전체') && bankNote.includes('CATEGORY_LABELS'), '문제은행 개수 안내에 전체·주제 라벨이 있어야 함');
+  assert(bankNote.includes('data-testid="question-bank-note"'), '문제은행 안내 테스트 id가 있어야 함');
+
+  const hostRooms = fs.readFileSync(path.join(ROOT, 'client/src/pages/HostRooms.tsx'), 'utf8');
+  const display = fs.readFileSync(path.join(ROOT, 'client/src/pages/DisplayRoom.tsx'), 'utf8');
+  assert(hostRooms.includes('QuestionBankNote') && display.includes('QuestionBankNote'), '호스트·송출 방 만들기에 은행 개수 표시가 있어야 함');
+  assert(display.includes('display-scroll-hint') && display.includes('waitNeedsScroll'), '송출 시작 화면에 스크롤 안내가 있어야 함');
+
+  const stats = questionBankStats();
+  for (const level of LEVELS) {
+    assert(stats[level].total >= 25, `화면용 은행 집계: ${level} ≥ 25`);
+    const sum = CATEGORIES.reduce((n, c) => n + (stats[level][c] ?? 0), 0);
+    assert(sum === stats[level].total, `화면용 은행 집계: ${level} 주제 합 = 전체`);
+  }
+  log('privacy / home / question-bank screen checks ok');
 }
 
 async function verifyDisplayRemote() {

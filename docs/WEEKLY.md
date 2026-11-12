@@ -17,10 +17,14 @@ server/data/questions/<YYYY-WW>.json
 
 레벨(초등/중등/고등/청년)마다 한 주에 약 30문제를 두고, 카테고리 비율은 대략:
 
-| 카테고리 | 비율 | 30문제 기준 권장 개수 |
+| 카테고리 | 비율(대략) | 설명 |
 |---|---|---|
-| 성경 (`bible`) | 90% | ~27개 |
-| 넌센스 (`nonsense`) | 10% | ~3개 |
+| 성경 (`bible`) | 70% | 성경 본문 OX |
+| 교회절기 (`season`) | 8% | 대림·성탄·사순·부활 등 |
+| 몸·자연 (`nature`) | 6% | 우리 몸과 자연 |
+| 우리말 (`korean`) | 6% | 한글·맞춤법 |
+| 시사 (`current`) | 5% | 확실한 시사·상식 |
+| 넌센스 (`nonsense`) | 5% | 말장난 OX |
 
 실제 게임에서는 호스트가 고른 문제 수(10/20/30)에 맞춰 같은 비율로 자동으로 섞어서
 출제해요. 넌센스 문항이 모자라면 성경 문항으로 채워 넣어요(그 반대도 마찬가지). 레벨의
@@ -36,7 +40,7 @@ server/data/questions/<YYYY-WW>.json
 |---|---|---|---|
 | `id` | string | 필수 | 전체 문항 뱅크에서 고유해야 하는 안정적인 식별자. 예: `elementary-bible-031` |
 | `level` | string | 필수 | `elementary`(초등) \| `middle`(중등) \| `high`(고등) \| `youth`(청년) |
-| `category` | string | 필수 | `bible`(성경) \| `nonsense`(넌센스) |
+| `category` | string | 필수 | `bible` \| `season` \| `nature` \| `korean` \| `current` \| `nonsense` |
 | `text` | string | 필수 | 문제 문장. 전체 문항 뱅크에서 고유해야 해요 |
 | `answer` | string | 필수 | `"O"` 또는 `"X"` |
 | `explanation` | string | 필수 | 정답 공개 시 보여줄 짧은 설명 |
