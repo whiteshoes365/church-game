@@ -46,3 +46,14 @@ export function remoteUrl(room: Pick<RoomSnapshot, 'joinCode' | 'id'>): string {
 export function pairUrl(code: string): string {
   return hashUrl(`/remote/pair/${code}`);
 }
+
+/**
+ * 학생이 첫 화면에 넣은 글자에서 입장 코드(와 있으면 방 PIN)를 꺼낸다.
+ * 코드만 넣어도 되고, 송출 화면의 주소(`.../#/j/ABCDE` 또는 `...?p=1234`)를 통째로 붙여 넣어도 된다.
+ */
+export function parseJoinInput(text: string): { code: string; pin: string | null } {
+  const raw = String(text ?? '').trim();
+  const m = raw.match(/\/j\/([0-9A-Za-z]+)(?:\?(?:.*&)?p=(\d{4})(?!\d))?/);
+  if (m) return { code: normalizeJoinCode(m[1]), pin: m[2] ?? null };
+  return { code: normalizeJoinCode(raw), pin: null };
+}

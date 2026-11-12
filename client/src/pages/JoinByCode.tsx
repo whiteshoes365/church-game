@@ -48,7 +48,7 @@ export function JoinByCode() {
           <>
             <p className="form-error join-error">{error}</p>
             <button className="btn btn-primary" onClick={() => navigate('/')}>
-              처음부터 찾기
+              방 코드 다시 넣기
             </button>
           </>
         ) : (

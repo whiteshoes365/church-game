@@ -3788,3 +3788,256 @@ button {
   color: #f5c518;
   word-break: break-all;
 }
+
+/* ---- 베타 검토: 바닥글 · 방침 페이지 · 서버 깨우기 안내 · 오늘 수업 안내 ---- */
+.legal-footer {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.legal-footer a {
+  color: var(--text-dim);
+  text-decoration: underline;
+  padding: 6px 4px;
+  display: inline-block;
+}
+
+.legal-footer-dark,
+.legal-footer-dark a {
+  color: #b8c2cc;
+}
+
+.legal-footer-shop {
+  padding-bottom: 16px;
+}
+
+.legal-wrap {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.legal-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.legal-tab {
+  flex: 1;
+  text-align: center;
+  padding: 10px 8px;
+  border: 3px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.legal-tab.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.legal-body {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
+  word-break: keep-all;
+}
+
+.legal-body h2 {
+  font-size: 16px;
+  margin: 20px 0 6px;
+}
+
+.legal-body p {
+  margin: 0 0 8px;
+}
+
+.legal-body ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.legal-body li {
+  margin-bottom: 4px;
+}
+
+.legal-lead {
+  font-weight: 700;
+}
+
+.legal-updated {
+  margin-top: 20px !important;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.legal-actions {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.server-wake-notice {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #1c2330;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  word-break: keep-all;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.server-wake-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  background: #f5c518;
+  animation: server-wake-blink 1s steps(2, start) infinite;
+}
+
+@keyframes server-wake-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.join-code-input {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.join-code-input::placeholder {
+  letter-spacing: 0;
+  font-weight: 400;
+  font-size: 16px;
+  text-transform: none;
+}
+
+.church-search-fold {
+  padding: 12px 16px;
+}
+
+.church-search-fold > summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-dim);
+  padding: 6px 0;
+}
+
+.church-search-body {
+  margin-top: 10px;
+}
+
+.join-privacy-note {
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 2px solid var(--border);
+  word-break: keep-all;
+}
+
+.class-guide {
+  width: 100%;
+  max-width: min(1100px, 92vw);
+  margin: 0 auto 20px;
+}
+
+.class-guide-steps {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: class-step;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.class-guide-steps li {
+  counter-increment: class-step;
+  position: relative;
+  padding: 10px 12px 10px 48px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 3px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text);
+  word-break: keep-all;
+}
+
+.class-guide-steps li::before {
+  content: counter(class-step);
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 800;
+}
+
+.class-guide-steps li span {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.class-guide-warn {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.class-guide-help {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.class-guide-help > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
+.class-guide-help ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+
+.display-wait .class-guide {
+  max-width: none;
+}
+
+.question-bank-box {
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 2px solid var(--border);
+}
+
+.question-bank-box .fine-print {
+  color: var(--text);
+}
