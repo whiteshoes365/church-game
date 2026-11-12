@@ -688,6 +688,64 @@ async function main() {
       '교회 검색 결과에 생성한 교회가 포함되어야 함',
     );
 
+    // 빈 검색어(없음·공백·문자열 아님)로는 교회 목록이 나오지 않아야 함 (학생 첫 화면에 다른 교회가 뜨지 않게)
+    for (const emptyQuery of ['', '   ', undefined, null, 0]) {
+      host.send('searchChurches', { query: emptyQuery });
+      const emptyResult = await host.waitFor('churchList');
+      assert(emptyResult.churches.length === 0, `빈 검색어(${JSON.stringify(emptyQuery)})에는 교회가 하나도 나오면 안 됨`);
+    }
+
+    // 문제 은행 개수: 서버가 실제 데이터 파일에서 센 값(전체, 성경/넌센스)을 방 만들기 화면에 준다
+    {
+      const dataDir = path.join(ROOT, 'server', 'data', 'questions');
+      const expected = {};
+      for (const file of fs.readdirSync(dataDir).filter((f) => f.endsWith('.json'))) {
+        for (const q of JSON.parse(fs.readFileSync(path.join(dataDir, file), 'utf8'))) {
+          expected[q.level] ??= { total: 0, bible: 0, nonsense: 0 };
+          expected[q.level].total += 1;
+          expected[q.level][q.category] += 1;
+        }
+      }
+      host.send('getQuestionBank');
+      const bankMsg = await host.waitFor('questionBank');
+      host.send('listRooms', { churchId });
+      const listMsg = await host.waitFor('roomList', (m) => m.churchId === churchId);
+      for (const level of ['elementary', 'middle', 'high', 'youth']) {
+        const want = expected[level] ?? { total: 0, bible: 0, nonsense: 0 };
+        for (const [label, detail] of [['getQuestionBank', bankMsg.questionBankDetail], ['roomList', listMsg.questionBankDetail]]) {
+          assert(detail && detail[level], `${label}: ${level} 은행 개수가 있어야 함`);
+          assert(
+            detail[level].total === want.total && detail[level].bible === want.bible && detail[level].nonsense === want.nonsense,
+            `${label}: ${level} 은행 개수가 데이터 파일과 같아야 함 (받음 ${JSON.stringify(detail[level])}, 기대 ${JSON.stringify(want)})`,
+          );
+          assert(detail[level].bible + detail[level].nonsense === detail[level].total, `${label}: ${level} 성경+넌센스 = 전체`);
+        }
+        assert(bankMsg.questionBank[level] === want.total, `${level} questionBank(전체 수)도 같은 값이어야 함`);
+      }
+      // 은행보다 많이 고르면 은행만큼만 나온다
+      const smallest = Object.entries(bankMsg.questionBank).sort((a, b) => a[1] - b[1])[0];
+      // (다른 검사에 섞이지 않게 따로 연 소켓·교회에서 방을 만든다)
+      const bankHost = new Client('bank-host');
+      await bankHost.ready();
+      bankHost.send('findOrCreateChurch', { name: `은행검증교회-${Date.now()}` });
+      const bankChurch = await bankHost.waitFor('churchJoined');
+      bankHost.send('createRoom', { churchId: bankChurch.church.id, title: '은행검증방', level: smallest[0], questionCount: smallest[1] + 50 });
+      const bankRoom = await bankHost.waitFor('roomCreated');
+      assert(bankRoom.room.questionCount === smallest[1], `은행(${smallest[1]})보다 많이 골라도 은행만큼만 나와야 함 (받음 ${bankRoom.room.questionCount})`);
+      // 입장 코드 해석: 학생 첫 화면이 쓰는 경로 (코드 → 방 id). 소문자·공백도 같은 방.
+      const jc = bankRoom.room.joinCode;
+      assert(/^[0-9A-Z]{5}$/.test(jc), '방에는 5자리 입장 코드가 있어야 함');
+      p1.send('resolveJoinCode', { code: ` ${jc.toLowerCase()} ` });
+      const jr = await p1.waitFor('joinCodeResolved');
+      assert(jr.roomId === bankRoom.room.id && jr.code === jc, '입장 코드로 그 방을 찾아야 함');
+      // 방 PIN(숫자 4자리)만으로는 방을 찾지 않는다 (전역 PIN 검색 없음)
+      p1.send('resolveJoinCode', { code: bankRoom.room.pin });
+      const pinOnly = await p1.waitFor('joinCodeResolved');
+      assert(pinOnly.roomId === null, '방 PIN만으로는 방을 찾을 수 없어야 함');
+      bankHost.close();
+      log('question bank counts, empty search, join code resolve OK');
+    }
+
     host.send('findOrCreateChurch', { name: churchName });
     const churchAgain = await host.waitFor('churchJoined');
     assert(churchAgain.church.id === churchId, '같은 이름으로 다시 찾으면 같은 교회 id를 반환해야 함');

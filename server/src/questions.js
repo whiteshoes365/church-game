@@ -75,6 +75,19 @@ for (const level of LEVELS) {
   }
 }
 
+// 난이도별 문제 은행 개수 (전체 + 카테고리별). 방 만들기 화면이 실제 개수를 보여 줄 때 쓴다.
+// 반환: { elementary: { total, bible, nonsense }, ... } — 항상 로드된 은행에서 센다.
+export function questionBankStats() {
+  const stats = {};
+  for (const level of LEVELS) {
+    stats[level] = { total: QUESTIONS_BY_LEVEL[level].length };
+    for (const category of CATEGORIES) {
+      stats[level][category] = QUESTIONS_BY_LEVEL_CATEGORY[level][category].length;
+    }
+  }
+  return stats;
+}
+
 // 기존 코드와의 호환을 위해 기본(초등) 문항 배열도 그대로 export
 export const QUESTIONS = QUESTIONS_BY_LEVEL[DEFAULT_LEVEL];
 

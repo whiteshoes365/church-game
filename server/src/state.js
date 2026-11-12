@@ -430,9 +430,10 @@ function normalize(name) {
 }
 
 export function searchChurches(query) {
-  const q = normalize(query || '');
+  // 빈 검색어에는 아무것도 돌려주지 않는다 (다른 교회 이름이 첫 화면에 그대로 보이지 않게).
+  const q = normalize(typeof query === 'string' ? query : '');
+  if (!q) return [];
   const list = [...churches.values()];
-  if (!q) return list.slice(0, 10);
   return list.filter((c) => c.normalized.includes(q)).slice(0, 10);
 }
 
