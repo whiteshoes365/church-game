@@ -1872,14 +1872,25 @@ async function verifyClientScreens() {
     '실명, 전화번호, 이메일, 생일',
     '광고가 없어요',
     '만 14세 미만',
-    '문의 채널은 베타 안내에서 공개',
+    '베타 기간 무료',
+    'CONTACT_EMAIL',
+    'CONTACT_MAILTO',
   ]) {
-    assert(legal.includes(phrase), `개인정보처리방침에 "${phrase}" 문구가 있어야 함`);
+    assert(legal.includes(phrase), `개인정보처리방침·이용안내에 "${phrase}" 문구가 있어야 함`);
   }
+  assert(!legal.includes('베타 안내에서 공개'), '문의처가 비어 있다는 문구는 남아 있으면 안 됨');
   assert(legal.includes("tab === 'privacy'") && legal.includes("tab === 'terms'"), '방침·이용안내 탭이 있어야 함');
+
+  const contact = fs.readFileSync(path.join(ROOT, 'client/src/contact.ts'), 'utf8');
+  assert(
+    contact.includes("CONTACT_EMAIL = 'whiteshoes365@mail.grokbot.com'") && contact.includes('mailto:${CONTACT_EMAIL}'),
+    'contact.ts에 공개 문의 이메일·mailto가 있어야 함',
+  );
 
   const footer = fs.readFileSync(path.join(ROOT, 'client/src/components/LegalFooter.tsx'), 'utf8');
   assert(footer.includes('to="/privacy"') && footer.includes('개인정보처리방침'), '바닥글에 방침 링크가 있어야 함');
+  assert(footer.includes('CONTACT_MAILTO') && footer.includes('CONTACT_EMAIL'), '바닥글에 문의 mailto 링크가 있어야 함');
+  assert(!footer.includes('베타 안내에서 공개'), '바닥글에 문의처 미정 문구가 있으면 안 됨');
 
   const home = fs.readFileSync(path.join(ROOT, 'client/src/pages/PlayerJoin.tsx'), 'utf8');
   assert(home.includes('방 코드로 입장') && home.includes('id="join-code"'), '학생 홈에 방 코드 입장 카드가 있어야 함');

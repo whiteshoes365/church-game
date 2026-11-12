@@ -3837,6 +3837,10 @@ button {
   display: inline-block;
 }
 
+.legal-mailto {
+  word-break: break-all;
+}
+
 .legal-footer-dark,
 .legal-footer-dark a {
   color: #b8c2cc;
