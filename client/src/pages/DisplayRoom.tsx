@@ -45,6 +45,7 @@ export function DisplayRoom() {
   const [capacity, setCapacity] = useState<Capacity>(8);
   const [level, setLevel] = useState<Level>('elementary');
   const [hostPasswordInput, setHostPasswordInput] = useState('');
+  const [teamMode, setTeamMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [qrHidden, setQrHidden] = useState(false);
   const [setupCard, setSetupCard] = useState<RemoteSetupCard | null>(null);
@@ -209,6 +210,7 @@ export function DisplayRoom() {
         level,
         questionCount: 10,
         hostPassword: hostPasswordInput || undefined,
+        teamMode,
         music: { track: local.track, enabled: local.enabled, volume: local.volume },
       });
     });
@@ -299,6 +301,12 @@ export function DisplayRoom() {
               value={hostPasswordInput}
               onChange={(e) => setHostPasswordInput(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
             />
+            <p className="picker-label">더 재미있게</p>
+            <div className="row row-wrap toggle-row">
+              <button type="button" className={`btn btn-sm toggle-btn ${teamMode ? 'btn-primary' : ''}`} onClick={() => setTeamMode((v) => !v)}>
+                팀 대결 {teamMode ? '켜짐' : '꺼짐'}
+              </button>
+            </div>
             <MusicPicker preview />
             <button className="btn btn-primary" type="button" disabled={creating || !title.trim()} onClick={createRoomHere}>
               {creating ? '만드는 중…' : '방 만들고 송출 시작'}
@@ -320,12 +328,12 @@ export function DisplayRoom() {
       {setupOpen && setupCard && remUrl && (
         <div className="display-setup-overlay" role="dialog" aria-label="리모컨 연결 안내">
           <div className="display-setup-card card stack">
-            <h2 className="card-title">
+            <h2 className="card-title display-setup-title">
               <span className="title-block block-gold" aria-hidden />
-              폰 리모컨 연결 (잠깐만 보여요)
+              <span className="display-setup-title-text">폰 리모컨 연결</span>
             </h2>
-            <p className="subtitle" style={{ textAlign: 'left', margin: 0 }}>
-              선생님 휴대폰으로 아래 QR을 찍거나 주소를 연 뒤, 진행자 비밀번호를 입력하세요. 이 안내는 곧 자동으로 숨겨요.
+            <p className="subtitle display-setup-lead">
+              잠깐만 보여 준 뒤 숨겨요. 휴대폰으로 QR을 찍거나 주소를 연 다음, 진행자 비밀번호를 입력하세요.
             </p>
             <div className="display-setup-pw">
               <span>진행자 비밀번호</span>

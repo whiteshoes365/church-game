@@ -3756,6 +3756,22 @@ button {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
+.display-setup-title {
+  flex-wrap: nowrap;
+}
+
+.display-setup-title-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.display-setup-lead {
+  text-align: left;
+  margin: 0;
+  line-height: 1.45;
+}
+
 .display-setup-pw {
   display: flex;
   flex-direction: column;

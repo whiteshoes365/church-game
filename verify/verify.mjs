@@ -1764,6 +1764,13 @@ function verifyPauseUnit() {
   const r0 = gameState.createRoom({ churchId: church.id, title: '공개전종료', pin: '1357', hostPassword: 'EarlyEnd1' });
   gameState.joinRoom(r0, { deviceId: 'early-a', nickname: '알파', avatar: 'circle-blue' });
   gameState.joinRoom(r0, { deviceId: 'early-b', nickname: '베타', avatar: 'circle-blue' });
+  // 시작 위치는 O/X 구역(z 1~6.5) 밖 중립 지대여야 한다 (움직이지 않은 학생이 구역에 있으면 안 됨)
+  for (const p of r0.players.values()) {
+    const { x, z } = p.motion.pos;
+    const inO = x >= ZONES.O.xmin && x <= ZONES.O.xmax && z >= ZONES.O.zmin && z <= ZONES.O.zmax;
+    const inX = x >= ZONES.X.xmin && x <= ZONES.X.xmax && z >= ZONES.X.zmin && z <= ZONES.X.zmax;
+    assert(!inO && !inX && z > ZONES.O.zmax, `시작 위치는 중립 지대(구역 밖): (${x.toFixed(2)}, ${z.toFixed(2)})`);
+  }
   gameState.startQuiz(r0, 3);
   gameState.advanceQuestion(r0, () => {});
   assert(r0.status === 'question', '첫 문제 진행 중');

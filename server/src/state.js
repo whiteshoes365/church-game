@@ -114,10 +114,11 @@ function clampToBounds(pos) {
 }
 
 function randomSpawn() {
-  // 앞줄(z 큼)이 카메라에 너무 가까우면 발이 잘리므로, 지도 맨 앞보다는 한 걸음 뒤에서 시작한다.
+  // 반드시 O/X 구역(z 1~6.5) 밖 중립 지대에서 시작한다 (움직이지 않은 학생이 구역에 있으면 안 됨).
+  // 앞줄 발 잘림은 카메라·화면 여백으로 맞춘다 — 시작 z 를 구역 안으로 끌어오면 안 된다.
   return {
     x: MAP_BOUNDS.xmin + 0.5 + Math.random() * (MAP_BOUNDS.xmax - MAP_BOUNDS.xmin - 1),
-    z: 5.8 + Math.random() * 1.4,
+    z: 7 + Math.random() * 1.5, // 7.0 ~ 8.5 (구역 zmax 6.5 밖)
   };
 }
 

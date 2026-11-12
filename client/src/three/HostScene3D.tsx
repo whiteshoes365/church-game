@@ -23,8 +23,8 @@ function zoneCenterX(box: Rect): number {
 // 이름표와 겹친다. 서버가 알려 준 자리(x, z)를 화면 좌표로 옮겨 보고(카메라·글자
 // 크기는 아래 상수와 CSS 에서 온다), 겹칠 이웃이 있으면 이름표를 한 단씩 위로
 // 올린다(가장 낮은 빈 단을 고른다).
-const CAMERA = { x: 0, y: 11.4, z: 16.4, fov: 46 }; // HostCanvas3D 의 카메라와 같아야 한다
-const LOOK_AT = { x: 0, y: 0.85, z: 1.6 }; // 앞줄 발이 잘리지 않게 시점을 조금 내리고 뒤로
+const CAMERA = { x: 0, y: 12.2, z: 18.2, fov: 44 }; // HostCanvas3D 와 같아야 한다. 앞줄(z≈7~8.5) 발이 잘리지 않게 뒤로·위로
+const LOOK_AT = { x: 0, y: 0.35, z: 2.2 };
 const CHARACTER_SCALE = 1.5;
 const LABEL_TIER = 0.62; // 한 단 높이 (캐릭터 기준 단위)
 const LABEL_TIERS = 8;
