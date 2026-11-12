@@ -56,7 +56,9 @@ export function DisplayRoom() {
   const [setupCard, setSetupCard] = useState<RemoteSetupCard | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [bankDetail, setBankDetail] = useState<QuestionBankDetail>({});
+  const [waitNeedsScroll, setWaitNeedsScroll] = useState(false);
   const activeRef = useRef<string | null>(routeRoomId ?? null);
+  const waitScreenRef = useRef<HTMLDivElement | null>(null);
   const now = useQuestionClock(room);
 
   useRoomMusic(room, { play: true, publish: false });
@@ -227,6 +229,24 @@ export function DisplayRoom() {
     });
   }
 
+  useEffect(() => {
+    if (room) {
+      setWaitNeedsScroll(false);
+      return;
+    }
+    const el = waitScreenRef.current;
+    if (!el) return;
+    const check = () => setWaitNeedsScroll(el.scrollHeight > el.clientHeight + 12);
+    check();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', check);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', check);
+    };
+  }, [room, pairCode, bankDetail, level, teamMode, creating, error]);
+
   const qrUrl = room ? joinQrUrl(room) : null;
   const textUrl = room ? joinTextUrl(room) : null;
   const showBigQr = !!room && room.status === 'lobby' && room.showQr !== false && !qrHidden;
@@ -235,7 +255,7 @@ export function DisplayRoom() {
 
   if (!room) {
     return (
-      <div className="display-screen display-wait">
+      <div className="display-screen display-wait" ref={waitScreenRef}>
         <header className="display-wait-head">
           <h1 className="title">송출 화면</h1>
           <p className="subtitle">프로젝터·TV에 띄울 PC 화면이에요. 진행자 비밀번호는 여기에 넣지 않아요.</p>
@@ -245,6 +265,11 @@ export function DisplayRoom() {
         </header>
         {error && <p className="form-error form-error-banner">{error}</p>}
         <ClassGuide className="display-guide" />
+        {waitNeedsScroll && (
+          <p className="display-scroll-hint" role="status">
+            화면이 잘리면 아래로 스크롤하세요 · 아래쪽에 방 만들기가 있어요
+          </p>
+        )}
         <div className="display-wait-grid">
           <section className="display-pair-card card stack">
             <h2 className="card-title">

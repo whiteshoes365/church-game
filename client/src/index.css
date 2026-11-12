@@ -249,6 +249,22 @@ button {
   background: var(--category-bible);
 }
 
+.badge-category.category-season {
+  background: #2f6b4f;
+}
+
+.badge-category.category-nature {
+  background: #3a6ea5;
+}
+
+.badge-category.category-korean {
+  background: #8a4b2f;
+}
+
+.badge-category.category-current {
+  background: #5a4a7a;
+}
+
 .badge-category.category-nonsense {
   background: var(--category-nonsense);
 }
@@ -3397,6 +3413,21 @@ button {
   padding: 24px 32px 40px;
   background: linear-gradient(160deg, #1c2330 0%, #2a3548 45%, #1c2330 100%);
   color: #fff;
+  max-height: 100vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.display-scroll-hint {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  text-align: center;
+  font-size: clamp(14px, 1.2vw, 18px);
+  font-weight: 700;
+  color: #1c2330;
+  background: #f5c518;
+  border: 3px solid #000;
+  box-shadow: 4px 4px 0 0 #000;
 }
 
 .display-wait .title,

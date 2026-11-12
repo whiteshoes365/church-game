@@ -139,7 +139,7 @@ if (errors.length === 0) {
     if (forLevel.length === 0) continue;
     const total = forLevel.length;
 
-    const counts = { bible: 0, nonsense: 0 };
+    const counts = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
     let oCount = 0;
     let xCount = 0;
     for (const q of forLevel) {
@@ -148,15 +148,10 @@ if (errors.length === 0) {
       else if (q.answer === 'X') xCount += 1;
     }
 
-    const recommended = {
-      bible: Math.round(total * 0.9),
-      nonsense: Math.round(total * 0.1),
-    };
+    // 권장치는 서버 CATEGORY_RATIOS와 같게 두지 않고, 주제 다양성만 가볍게 점검해요.
     for (const category of CATEGORIES) {
-      if (counts[category] < recommended[category]) {
-        warnings.push(
-          `level '${level}': ${category} 문항이 ${counts[category]}개로, 권장치(~${recommended[category]}개, ${total}문제 기준)보다 적어요.`,
-        );
+      if (counts[category] === 0 && total >= 10) {
+        warnings.push(`level '${level}': ${category} 문항이 0개예요. 가능하면 주제를 고르게 넣어 주세요.`);
       }
     }
 

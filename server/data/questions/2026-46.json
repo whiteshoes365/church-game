@@ -1,0 +1,506 @@
+[
+  {
+    "id": "elementary-season-001",
+    "level": "elementary",
+    "category": "season",
+    "text": "대림절은 성탄(예수님 탄생)을 기다리는 교회 절기예요.",
+    "answer": "O",
+    "explanation": "대림절은 성탄을 앞두고 예수님을 기다리는 절기예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-season-002",
+    "level": "elementary",
+    "category": "season",
+    "text": "성탄절은 예수님께서 부활하신 날을 기념해요.",
+    "answer": "X",
+    "explanation": "성탄절은 예수님 탄생을 기념하고, 부활은 부활절에 기념해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-season-003",
+    "level": "elementary",
+    "category": "season",
+    "text": "부활절은 예수님께서 죽은 자 가운데서 살아나신 것을 기념해요.",
+    "answer": "O",
+    "explanation": "부활절은 예수님의 부활을 기념하는 절기예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-nature-001",
+    "level": "elementary",
+    "category": "nature",
+    "text": "사람은 숨을 쉴 때 코나 입으로 공기를 들이마셔요.",
+    "answer": "O",
+    "explanation": "호흡은 코나 입으로 공기를 들이마시고 내쉬는 일이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-nature-002",
+    "level": "elementary",
+    "category": "nature",
+    "text": "나무는 햇빛이 없어도 잘 자라요.",
+    "answer": "X",
+    "explanation": "나무는 광합성에 햇빛이 필요해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-nature-003",
+    "level": "elementary",
+    "category": "nature",
+    "text": "물은 얼면 고체가 되고, 끓으면 기체가 될 수 있어요.",
+    "answer": "O",
+    "explanation": "물은 온도에 따라 고체·액체·기체로 변해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-korean-001",
+    "level": "elementary",
+    "category": "korean",
+    "text": "한글을 만든 분은 세종대왕이에요.",
+    "answer": "O",
+    "explanation": "세종대왕이 훈민정음(한글)을 창제했어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-korean-002",
+    "level": "elementary",
+    "category": "korean",
+    "text": "한글의 기본 홀소리(모음)는 'ㄱ, ㄴ, ㄷ'이에요.",
+    "answer": "X",
+    "explanation": "ㄱ·ㄴ·ㄷ은 닿소리(자음)예요. 홀소리는 ㅏ·ㅑ 같은 소리예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-korean-003",
+    "level": "elementary",
+    "category": "korean",
+    "text": "'사과'는 과일 이름이기도 하고, 잘못을 빌 때 쓰는 말이기도 해요.",
+    "answer": "O",
+    "explanation": "같은 말 '사과'가 과일과 '미안하다'는 뜻으로 쓰여요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-current-001",
+    "level": "elementary",
+    "category": "current",
+    "text": "대한민국의 수도는 서울이에요.",
+    "answer": "O",
+    "explanation": "대한민국의 수도는 서울특별시예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-current-002",
+    "level": "elementary",
+    "category": "current",
+    "text": "우리나라의 국기는 일장기를 써요.",
+    "answer": "X",
+    "explanation": "우리나라 국기는 태극기예요. 일장기는 일본의 국기예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-current-003",
+    "level": "elementary",
+    "category": "current",
+    "text": "어린이날은 매년 5월 5일이에요.",
+    "answer": "O",
+    "explanation": "대한민국의 어린이날은 5월 5일이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-nonsense-001",
+    "level": "elementary",
+    "category": "nonsense",
+    "text": "밤이 길어도 잠이 안 오는 과일은 '배'예요.",
+    "answer": "X",
+    "explanation": "말장난의 정답은 보통 '자두(자도)'예요. '배'는 아니에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "elementary-nonsense-002",
+    "level": "elementary",
+    "category": "nonsense",
+    "text": "우산을 쓰면 비가 안 오는 이유는 '우산'이라서가 아니라, 밖에 안 나가서예요—이건 넌센스 말장난이에요.",
+    "answer": "O",
+    "explanation": "논리처럼 들리지만 일부러 빗나간 말장난(넌센스)이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-season-001",
+    "level": "middle",
+    "category": "season",
+    "text": "대림절은 보통 성탄 전 네 주 동안 지켜요.",
+    "answer": "O",
+    "explanation": "서방 교회에서 대림절은 성탄 전 약 4주간이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-season-002",
+    "level": "middle",
+    "category": "season",
+    "text": "사순절은 성탄을 앞두고 지키는 절기예요.",
+    "answer": "X",
+    "explanation": "사순절은 부활절을 앞두고 지키는 절기예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-season-003",
+    "level": "middle",
+    "category": "season",
+    "text": "성탄 시즌의 상징 중 하나로 크리스마스 트리(성탄 트리)가 쓰여요.",
+    "answer": "O",
+    "explanation": "많은 교회에서 성탄 시즌에 트리를 장식해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-nature-001",
+    "level": "middle",
+    "category": "nature",
+    "text": "심장은 혈액을 온몸으로 보내는 펌프 역할을 해요.",
+    "answer": "O",
+    "explanation": "심장은 수축·이완으로 혈액을 순환시켜요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-nature-002",
+    "level": "middle",
+    "category": "nature",
+    "text": "지구는 태양을 중심으로 돌고, 스스로도 자전해요.",
+    "answer": "O",
+    "explanation": "지구는 태양 주위를 공전하고 스스로 자전해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-nature-003",
+    "level": "middle",
+    "category": "nature",
+    "text": "인체의 뼈는 모두 합쳐 약 50개뿐이에요.",
+    "answer": "X",
+    "explanation": "성인의 뼈는 보통 약 206개예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-korean-001",
+    "level": "middle",
+    "category": "korean",
+    "text": "띄어쓰기는 뜻을 구별하는 데 도움이 돼요.",
+    "answer": "O",
+    "explanation": "띄어쓰기에 따라 문장 뜻이 달라질 수 있어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-korean-002",
+    "level": "middle",
+    "category": "korean",
+    "text": "'되다'와 '돼다'는 언제나 같은 뜻으로 마음대로 바꿔 써도 돼요.",
+    "answer": "X",
+    "explanation": "'돼'는 '되어'의 줄임이고, 상황에 맞는 표기를 써야 해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-korean-003",
+    "level": "middle",
+    "category": "korean",
+    "text": "외래어를 한글로 적을 때도 표준 표기 규칙이 있어요.",
+    "answer": "O",
+    "explanation": "국어 규정에 외래어 표기법이 있어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-current-001",
+    "level": "middle",
+    "category": "current",
+    "text": "대한민국의 정부 형태는 대통령제예요.",
+    "answer": "O",
+    "explanation": "대한민국은 대통령을 국가원수로 하는 대통령제예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-current-002",
+    "level": "middle",
+    "category": "current",
+    "text": "유엔(UN)은 제2차 세계대전 이후에 만들어진 국제기구예요.",
+    "answer": "O",
+    "explanation": "유엔은 1945년에 창설되었어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-current-003",
+    "level": "middle",
+    "category": "current",
+    "text": "대한민국의 법정 화폐 단위는 엔(¥)이에요.",
+    "answer": "X",
+    "explanation": "대한민국의 화폐 단위는 원(₩)이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-nonsense-001",
+    "level": "middle",
+    "category": "nonsense",
+    "text": "세상에서 가장 쉬운 숫자는 '십일(쉽-'일')'이에요.",
+    "answer": "O",
+    "explanation": "'십일'과 '쉽다'의 발음 말장난이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "middle-nonsense-002",
+    "level": "middle",
+    "category": "nonsense",
+    "text": "오이를 좋아하면 반드시 의사가 된다는 말은 의학 사실이에요.",
+    "answer": "X",
+    "explanation": "그건 사실이 아니라 말장난·농담에 가까워요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-season-001",
+    "level": "high",
+    "category": "season",
+    "text": "대림절의 전통적인 상징색 중 하나는 보라(자주)예요.",
+    "answer": "O",
+    "explanation": "많은 교회에서 대림절에 보라색 제단보·초를 써요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-season-002",
+    "level": "high",
+    "category": "season",
+    "text": "성탄절은 매년 12월 25일에 지키는 교회가 많아요.",
+    "answer": "O",
+    "explanation": "서방 교회 전통에서 성탄은 12월 25일이에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-season-003",
+    "level": "high",
+    "category": "season",
+    "text": "오순절(성령강림절)은 예수님 탄생을 기념하는 절기예요.",
+    "answer": "X",
+    "explanation": "오순절은 성령 강림을 기념하는 절기예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-nature-001",
+    "level": "high",
+    "category": "nature",
+    "text": "DNA는 생물의 유전 정보를 담고 있어요.",
+    "answer": "O",
+    "explanation": "DNA는 유전 정보를 저장하는 분자예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-nature-002",
+    "level": "high",
+    "category": "nature",
+    "text": "광합성은 주로 동물의 근육에서 일어나요.",
+    "answer": "X",
+    "explanation": "광합성은 식물의 엽록체 등에서 일어나요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-nature-003",
+    "level": "high",
+    "category": "nature",
+    "text": "사람의 정상 체온은 대략 36.5℃ 안팎이에요.",
+    "answer": "O",
+    "explanation": "건강한 성인의 평균 체온은 약 36.5℃ 전후예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-korean-001",
+    "level": "high",
+    "category": "korean",
+    "text": "표준어는 교양 있는 사람들이 두루 쓰는 현대 서울말을 바탕으로 정해요.",
+    "answer": "O",
+    "explanation": "국어기본법·표준어 규정에서 그렇게 정하고 있어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-korean-002",
+    "level": "high",
+    "category": "korean",
+    "text": "'않되다'처럼 '안'과 '않'을 구분 없이 써도 맞춤법에 맞아요.",
+    "answer": "X",
+    "explanation": "'안'은 부정이 붙을 때, '않'은 '아니하다'의 줄임에 쓰여요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-korean-003",
+    "level": "high",
+    "category": "korean",
+    "text": "높임말은 듣는 이·말하는 대상에 따라 말을 공손하게 바꾸는 표현이에요.",
+    "answer": "O",
+    "explanation": "상대 높임·주체 높임 등으로 공손을 나타냈어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-current-001",
+    "level": "high",
+    "category": "current",
+    "text": "대한민국 헌법상 주권은 국민에게 있어요.",
+    "answer": "O",
+    "explanation": "헌법 제1조에서 대한민국의 주권은 국민에게 있다고 해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-current-002",
+    "level": "high",
+    "category": "current",
+    "text": "투표권은 만 18세 이상 국민에게 부여되는 것이 원칙이에요.",
+    "answer": "O",
+    "explanation": "공직선거법상 선거권 연령은 만 18세예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-current-003",
+    "level": "high",
+    "category": "current",
+    "text": "기후변화는 온실가스 증가와 무관하다는 것이 과학계의 일치된 견해예요.",
+    "answer": "X",
+    "explanation": "기후변화에 온실가스 증가가 큰 영향을 준다는 것이 과학계의 합의예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-nonsense-001",
+    "level": "high",
+    "category": "nonsense",
+    "text": "시험 전에 밤을 새우면 성적이 '밤새' 오른다는 말은 통계적 사실이에요.",
+    "answer": "X",
+    "explanation": "말장난일 뿐, 밤샘이 성적을 올려 준다는 뜻이 아니에요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "high-nonsense-002",
+    "level": "high",
+    "category": "nonsense",
+    "text": "냉장고에 불을 켜 두면 전기세가 '불'나기 쉽다는 말은 말장난이에요.",
+    "answer": "O",
+    "explanation": "'불나다'의 중의를 이용한 넌센스예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-season-001",
+    "level": "youth",
+    "category": "season",
+    "text": "대림절(Advent)이라는 이름은 '온다'는 뜻의 라틴어에서 왔어요.",
+    "answer": "O",
+    "explanation": "Advent는 '도래·옴'을 뜻하는 라틴어에서 유래했어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-season-002",
+    "level": "youth",
+    "category": "season",
+    "text": "성탄 시즌의 '임마누엘'은 '하나님이 우리와 함께 계시다'는 뜻으로 읽혀요.",
+    "answer": "O",
+    "explanation": "마태복음 1:23 등에서 임마누엘의 뜻을 그렇게 밝혀요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-season-003",
+    "level": "youth",
+    "category": "season",
+    "text": "사순절은 보통 40일 동안 이어지는 절기예요.",
+    "answer": "O",
+    "explanation": "부활절 전 40일(주일 제외 계산 등)을 사순절로 지켜요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-nature-001",
+    "level": "youth",
+    "category": "nature",
+    "text": "백신은 면역계가 병원체를 미리 학습하도록 돕는 예방 수단이에요.",
+    "answer": "O",
+    "explanation": "백신은 면역 기억을 유도해 감염병을 예방해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-nature-002",
+    "level": "youth",
+    "category": "nature",
+    "text": "지구 대기의 약 78%는 산소예요.",
+    "answer": "X",
+    "explanation": "대기의 약 78%는 질소이고, 산소는 약 21%예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-nature-003",
+    "level": "youth",
+    "category": "nature",
+    "text": "수면은 기억 정리와 신체 회복에 도움이 돼요.",
+    "answer": "O",
+    "explanation": "충분한 수면은 인지·회복에 중요해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-korean-001",
+    "level": "youth",
+    "category": "korean",
+    "text": "한글은 자음과 모음을 조합해 글자를 만드는 표음 문자예요.",
+    "answer": "O",
+    "explanation": "한글은 소리(음소)를 바탕으로 조합하는 문자예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-korean-002",
+    "level": "youth",
+    "category": "korean",
+    "text": "'되요'는 '돼요'와 같은 표준 표기예요.",
+    "answer": "X",
+    "explanation": "표준 표기는 '돼요'(되어→돼)예요. '되요'는 틀려요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-korean-003",
+    "level": "youth",
+    "category": "korean",
+    "text": "문장부호(마침표·물음표 등)는 문장의 끝과 뜻을 돕는 기호예요.",
+    "answer": "O",
+    "explanation": "문장부호는 문장 구조와 뜻을 분명히 해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-current-001",
+    "level": "youth",
+    "category": "current",
+    "text": "세계보건기구(WHO)는 유엔 전문기구 중 하나예요.",
+    "answer": "O",
+    "explanation": "WHO는 유엔 체계의 보건 전문기구예요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-current-002",
+    "level": "youth",
+    "category": "current",
+    "text": "대한민국은 유엔 회원국이에요.",
+    "answer": "O",
+    "explanation": "대한민국은 1991년 유엔에 가입했어요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-current-003",
+    "level": "youth",
+    "category": "current",
+    "text": "개인정보 보호는 디지털 사회에서 더 이상 중요하지 않아요.",
+    "answer": "X",
+    "explanation": "개인정보 보호는 디지털 사회에서 더욱 중요해요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-nonsense-001",
+    "level": "youth",
+    "category": "nonsense",
+    "text": "회의가 길면 '장시간'이 아니라 '장시간(長時間)'만 맞는 말이라는 주장은 말장난일 수 있어요.",
+    "answer": "O",
+    "explanation": "같은 발음을 가지고 장난치는 넌센스에 가까워요.",
+    "week": "2026-46"
+  },
+  {
+    "id": "youth-nonsense-002",
+    "level": "youth",
+    "category": "nonsense",
+    "text": "커피를 마시면 언제나 키가 '커'진다는 말은 의학적으로 입증된 사실이에요.",
+    "answer": "X",
+    "explanation": "'커-피' 말장난일 뿐, 키가 자란다는 뜻이 아니에요.",
+    "week": "2026-46"
+  }
+]
