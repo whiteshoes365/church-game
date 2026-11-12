@@ -7,6 +7,8 @@ import { saveHostKey } from '../hostKeys';
 import { DEFAULT_LEVEL, LEVEL_CLASS, LEVEL_LABELS, LEVEL_OPTIONS } from '../levels';
 import { MusicPicker } from '../components/MusicPicker';
 import { music } from '../music';
+import { LegalFooter } from '../components/LegalFooter';
+import { QuestionBankNote, type QuestionBankDetail } from '../components/QuestionBankNote';
 
 const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
   { value: 'sanctuary', label: '예배당' },
@@ -48,6 +50,7 @@ export function HostRooms() {
   const [level, setLevel] = useState<Level>(DEFAULT_LEVEL);
   const [questionCount, setQuestionCount] = useState<number>(MAX_QUESTION_COUNT);
   const [questionBank, setQuestionBank] = useState<QuestionBank>({});
+  const [bankDetail, setBankDetail] = useState<QuestionBankDetail>({});
   const bankSize = questionBank[level];
   const countChoices = questionCountChoices(bankSize);
   // 난이도를 바꾸거나 은행 크기를 알게 됐을 때, 고른 문제 수가 선택지에 없으면
@@ -69,6 +72,7 @@ export function HostRooms() {
       if (msg.churchId !== churchId) return;
       setRooms(msg.rooms);
       if (msg.questionBank) setQuestionBank(msg.questionBank);
+      if (msg.questionBankDetail) setBankDetail(msg.questionBankDetail);
     });
     const offCreated = gameSocket.on('roomCreated', (msg) => {
       if (msg.hostKey) saveHostKey(msg.room.id, msg.hostKey);
@@ -172,11 +176,7 @@ export function HostRooms() {
               </button>
             ))}
           </div>
-          {bankSize !== undefined && bankSize < MAX_QUESTION_COUNT && (
-            <p className="fine-print question-bank-note">
-              {LEVEL_LABELS[level]} 문제 은행은 {bankSize}문제예요. {bankSize}문제까지만 고를 수 있어요.
-            </p>
-          )}
+          <QuestionBankNote level={level} detail={bankDetail} selected={effectiveCount} />
           <p className="picker-label">방 PIN (학생용, 숫자 4자리)</p>
           <input
             className="input"
@@ -196,7 +196,7 @@ export function HostRooms() {
             value={hostPassword}
             onChange={(e) => setHostPassword(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 12))}
           />
-          <p className="fine-print">진행자 화면을 다른 기기에서 다시 열 때 써요. 학생에게 알려 주지 마세요.</p>
+          <p className="fine-print">진행자 화면·폰 리모컨을 열 때 써요. 방 PIN과 다른 값이에요. 학생에게 알려 주지 마세요.</p>
           {formError && <p className="form-error">{formError}</p>}
           <MusicPicker preview />
           <p className="picker-label">더 재미있게</p>
@@ -239,6 +239,7 @@ export function HostRooms() {
         <button className="link-btn" onClick={() => navigate('/host')}>
           다른 교회 찾기
         </button>
+        <LegalFooter />
       </div>
     </div>
   );

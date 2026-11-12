@@ -2,7 +2,7 @@ export type RoomStatus = 'lobby' | 'question' | 'reveal' | 'finished';
 export type Capacity = 4 | 8 | 'unlimited';
 export type MapTheme = 'sanctuary' | 'playground' | 'forest';
 export type Level = 'elementary' | 'middle' | 'high' | 'youth';
-export type Category = 'bible' | 'nonsense';
+export type Category = 'bible' | 'season' | 'nature' | 'korean' | 'current' | 'nonsense';
 
 export interface PlayerSnapshot {
   id: string;

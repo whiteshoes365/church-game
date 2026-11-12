@@ -41,7 +41,7 @@ import {
   normalizeJoinCode,
 } from './state.js';
 import { randomInt } from 'node:crypto';
-import { LEVELS, QUESTIONS_BY_LEVEL } from './questions.js';
+import { LEVELS, QUESTIONS_BY_LEVEL, questionBankStats } from './questions.js';
 import {
   openGroup,
   normalizeCode,
@@ -62,6 +62,8 @@ import {
 
 const PORT = Number(process.env.PORT) || 8787;
 const QUESTION_BANK = Object.fromEntries(LEVELS.map((level) => [level, QUESTIONS_BY_LEVEL[level].length]));
+// 난이도별 { total, bible, season, … } — 방 만들기 화면(호스트·송출 PC)이 실제 은행 개수를 보여 준다.
+const QUESTION_BANK_DETAIL = questionBankStats();
 const POSITIONS_BROADCAST_MS = 80; // ~12.5 Hz, within the 10-15 Hz target
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../client/dist');
@@ -432,7 +434,10 @@ function handleMessage(socket, msg) {
   switch (msg.type) {
     case 'searchChurches': {
       const results = searchChurches(msg.query);
-      send(socket, 'churchList', { churches: results.map((c) => ({ id: c.id, name: c.name })) });
+      send(socket, 'churchList', {
+        query: typeof msg.query === 'string' ? msg.query : '',
+        churches: results.map((c) => ({ id: c.id, name: c.name })),
+      });
       break;
     }
 
@@ -447,7 +452,13 @@ function handleMessage(socket, msg) {
       if (!church) throw new Error('교회를 찾을 수 없어요.');
       const rooms = listRooms(msg.churchId).map(serializeRoomSummary);
       // questionBank: 난이도별 문제 은행 크기 (방 만들기 화면이 문제 수 선택지를 여기에 맞춘다)
-      send(socket, 'roomList', { churchId: msg.churchId, rooms, questionBank: QUESTION_BANK });
+      send(socket, 'roomList', { churchId: msg.churchId, rooms, questionBank: QUESTION_BANK, questionBankDetail: QUESTION_BANK_DETAIL });
+      break;
+    }
+
+    // 방을 만들기 전(교회를 아직 모르는 송출 PC 등)에도 은행 개수를 물어볼 수 있다.
+    case 'getQuestionBank': {
+      send(socket, 'questionBank', { questionBank: QUESTION_BANK, questionBankDetail: QUESTION_BANK_DETAIL });
       break;
     }
 

@@ -14,6 +14,9 @@ import type { Capacity, Level, MapTheme, PlayerPosition, RoomSnapshot } from '..
 import { useQuestionClock } from '../roomTime';
 import { useRoomMusic } from '../useRoomMusic';
 import { gameSocket } from '../ws';
+import { ClassGuide } from '../components/ClassGuide';
+import { LegalFooter } from '../components/LegalFooter';
+import { QuestionBankNote, type QuestionBankDetail } from '../components/QuestionBankNote';
 
 const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
   { value: 'sanctuary', label: '예배당' },
@@ -22,6 +25,8 @@ const MAP_OPTIONS: { value: MapTheme; label: string }[] = [
 ];
 
 const SETUP_AUTO_HIDE_MS = 45000;
+// 송출 PC에서 바로 만드는 방의 문제 수 (난이도 은행이 이보다 작으면 은행만큼만 나온다).
+const DISPLAY_QUESTION_COUNT = 10;
 
 interface RemoteSetupCard {
   roomId: string;
@@ -50,7 +55,10 @@ export function DisplayRoom() {
   const [qrHidden, setQrHidden] = useState(false);
   const [setupCard, setSetupCard] = useState<RemoteSetupCard | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [bankDetail, setBankDetail] = useState<QuestionBankDetail>({});
+  const [waitNeedsScroll, setWaitNeedsScroll] = useState(false);
   const activeRef = useRef<string | null>(routeRoomId ?? null);
+  const waitScreenRef = useRef<HTMLDivElement | null>(null);
   const now = useQuestionClock(room);
 
   useRoomMusic(room, { play: true, publish: false });
@@ -136,6 +144,10 @@ export function DisplayRoom() {
       setCreating(false);
       setTimeout(() => setError((cur) => (cur === msg.message ? null : cur)), 5000);
     });
+    const offBank = gameSocket.on('questionBank', (msg) => {
+      if (msg.questionBankDetail) setBankDetail(msg.questionBankDetail);
+    });
+    gameSocket.send('getQuestionBank');
     const onFs = () => setFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', onFs);
 
@@ -163,6 +175,7 @@ export function DisplayRoom() {
       offState();
       offPositions();
       offError();
+      offBank();
       document.removeEventListener('fullscreenchange', onFs);
     };
   }, [navigate, openDisplay, requestPair, routeRoomId]);
@@ -208,13 +221,31 @@ export function DisplayRoom() {
         map,
         capacity,
         level,
-        questionCount: 10,
+        questionCount: DISPLAY_QUESTION_COUNT,
         hostPassword: hostPasswordInput || undefined,
         teamMode,
         music: { track: local.track, enabled: local.enabled, volume: local.volume },
       });
     });
   }
+
+  useEffect(() => {
+    if (room) {
+      setWaitNeedsScroll(false);
+      return;
+    }
+    const el = waitScreenRef.current;
+    if (!el) return;
+    const check = () => setWaitNeedsScroll(el.scrollHeight > el.clientHeight + 12);
+    check();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', check);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', check);
+    };
+  }, [room, pairCode, bankDetail, level, teamMode, creating, error]);
 
   const qrUrl = room ? joinQrUrl(room) : null;
   const textUrl = room ? joinTextUrl(room) : null;
@@ -224,7 +255,7 @@ export function DisplayRoom() {
 
   if (!room) {
     return (
-      <div className="display-screen display-wait">
+      <div className="display-screen display-wait" ref={waitScreenRef}>
         <header className="display-wait-head">
           <h1 className="title">송출 화면</h1>
           <p className="subtitle">프로젝터·TV에 띄울 PC 화면이에요. 진행자 비밀번호는 여기에 넣지 않아요.</p>
@@ -233,6 +264,12 @@ export function DisplayRoom() {
           </button>
         </header>
         {error && <p className="form-error form-error-banner">{error}</p>}
+        <ClassGuide className="display-guide" />
+        {waitNeedsScroll && (
+          <p className="display-scroll-hint" role="status">
+            화면이 잘리면 아래로 스크롤하세요 · 아래쪽에 방 만들기가 있어요
+          </p>
+        )}
         <div className="display-wait-grid">
           <section className="display-pair-card card stack">
             <h2 className="card-title">
@@ -291,6 +328,7 @@ export function DisplayRoom() {
                 </button>
               ))}
             </div>
+            <QuestionBankNote level={level} detail={bankDetail} selected={DISPLAY_QUESTION_COUNT} />
             <p className="picker-label">진행자 비밀번호 (선생님 폰 리모컨용, 영문·숫자 4~12자)</p>
             <input
               className="input host-pw-input"
@@ -317,6 +355,7 @@ export function DisplayRoom() {
         <p className="fine-print display-wait-foot">
           <Link to="/host">진행자 화면</Link> · <Link to="/">학생 화면</Link>
         </p>
+        <LegalFooter className="legal-footer-dark" />
       </div>
     );
   }

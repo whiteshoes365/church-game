@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { gameSocket } from '../ws';
 import type { ChurchRef } from '../protocol';
+import { ClassGuide } from '../components/ClassGuide';
+import { LegalFooter } from '../components/LegalFooter';
 import { loadGroupSession, normalizeGroupCode, saveGroupSession } from '../groupSession';
 
 export function HostHome() {
@@ -30,8 +32,13 @@ export function HostHome() {
     };
   }, [navigate]);
 
+  // 글자를 넣었을 때만 검색한다 (빈 검색어로는 교회 목록이 뜨지 않는다).
   useEffect(() => {
-    gameSocket.send('searchChurches', { query });
+    if (!query.trim()) {
+      setResults([]);
+      return;
+    }
+    gameSocket.send('searchChurches', { query: query.trim() });
   }, [query]);
 
   function selectChurch(church: ChurchRef) {
@@ -61,6 +68,7 @@ export function HostHome() {
   return (
     <div className="screen">
       <h1 className="title host-home-title">호스트 (교사용)</h1>
+      <ClassGuide className="host-home-guide" />
       <div className="host-home-grid">
       <div className="card stack">
         <h2 className="card-title">
@@ -88,8 +96,9 @@ export function HostHome() {
         )}
 
         <button className="btn btn-primary" onClick={createOrJoin} disabled={!query.trim()}>
-          계속하기
+          {results.some((c) => c.name === query.trim()) ? '이 교회로 계속하기' : '이 이름으로 교회 만들기 · 계속하기'}
         </button>
+        <p className="fine-print">같은 이름의 교회가 있으면 그 교회로 들어가고, 없으면 새로 만들어요.</p>
 
       </div>
 
@@ -145,6 +154,7 @@ export function HostHome() {
       <button className="link-btn" onClick={() => navigate('/')}>
         학생 화면으로 이동
       </button>
+      <LegalFooter />
     </div>
   );
 }
