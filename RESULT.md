@@ -1,5 +1,51 @@
 # RESULT
 
+## 문제 신고 · 검토 (2026-11-12, 브랜치 `feat/question-report`)
+
+- **기반**: main `627310b`. 이 브랜치에만 커밋합니다. main 병합·origin/main push·운영 배포·운영 Supabase 마이그레이션 적용은 하지 않았습니다. `퀴즈검토_176문제.xlsx`와 비밀값은 커밋에 없습니다.
+- **검증**: `npm run build` 통과. `env -u SUPABASE_URL -u SUPABASE_ANON_KEY -u SUPABASE_SERVICE_ROLE_KEY npm run verify` → `ALL CHECKS PASSED` (최종 코드로 1회, 팀 동점 플레이크 없음). 신고 흐름·숨김 규칙 단위 테스트와 서버 연동 테스트를 추가했습니다.
+- **Claude Code**: Pro(`subscriptionType=pro`)에서 `claude-fable-5-2`로 서버 저장소·숨김 규칙·소켓 처리를 시작했으나, 2026-11-12 20:43 KST에 5시간 한도(`usage_limit_reached`, 해제 22:50 KST)로 중단되었습니다. API 결제로 넘기지 않았고, 남은 클라이언트 UI·마이그레이션·verify·스크린샷은 같은 브랜치에서 이어서 마쳤습니다.
+
+### 구현
+
+- **신고 UI**: 진행자 화면(`/ #/host/room/...`)과 선생님 폰 리모컨에 「이 문제 신고」·「직전 문제 신고」. 학생은 정답 공개 뒤에만 작은 「이 문제 신고」. 송출(프로젝터) 화면에는 없습니다. 사유는 틀린 답·애매함·부적절·오타·기타, 메모는 선택(서버도 200자 상한). 한 기기(변환된 값)당 문항 1건. 개인정보를 메모에 쓰지 말라는 안내가 있습니다.
+- **저장**: 운영은 스키마 `church_game`의 `question_reports` / `question_reviews`. Supabase가 없으면 `RECORDS_DIR/_question-reports/reports.json`. 닉네임·방 PIN·원문 기기 id·IP는 저장하지 않고, 문항마다 다른 SHA-256 변환값만 둡니다. 저장소를 못 읽어도 게임은 멈추지 않습니다.
+- **자동 숨김**: 새 방을 만들 때(문제 선정 시점)만 적용합니다. 이미 진행 중인 방의 문제는 빼지 않습니다. 서로 다른 기기 3대(`REPORT_HIDE_DEVICE_THRESHOLD`)가 신고하거나, 선생님(host/remote) 신고가 1건이면 그 문항을 은행에서 **강하게** 제외합니다(`selectQuizQuestions`의 `hiddenIds`). 방 만들기 화면의 은행 개수도 숨긴 문항을 뺀 수입니다.
+- **검토 페이지**: `/#/review`. 서버 환경 변수 `QUESTION_REVIEW_PASSWORD`로만 인증합니다(`VITE_*` 없음, 기본 비밀번호 없음, 비어 있으면 기능 꺼짐). 5번 틀리면 30초 잠금. 문항별로 신고를 묶고, 유지(신고를 비우고 숨김 해제)·숨김(신고는 남김)·수정 제안 저장을 할 수 있습니다. 「제안 파일 받기」는 JSON export이며 `server/data/questions/`는 직접 고치지 않습니다. 실제 수정·삭제는 나중에 사람이 적용합니다.
+- **개인정보 안내**: `Legal.tsx`(다루는 정보·보관·목적·보유 기간, 이용 안내)와 학생 입장 고지를 갱신했습니다.
+
+### 배포 전 마이그레이션 (아직 적용하지 않음)
+
+- **필요 여부**: 예. 운영에 이 기능을 켜려면 아래 SQL을 `church_game` 스키마에 먼저 적용해야 합니다. 기존 테이블·행은 바꾸지 않는 추가(additive) 마이그레이션입니다.
+- **SQL 파일**: `supabase/migrations/20261112_question_reports.sql`
+- **환경 변수**: 서버에 `QUESTION_REVIEW_PASSWORD`를 설정하세요(값은 커밋하지 않음). 운영 저장에는 기존처럼 `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`가 필요합니다.
+
+### 바뀐 주요 파일
+
+- `server/src/questionReports.js`, `server/src/index.js`, `server/src/questions.js`, `server/src/state.js`, `server/src/supabaseRecords.js`
+- `client/src/components/QuestionReport.tsx`, `client/src/pages/QuestionReview.tsx`, `HostRoom.tsx`, `RemoteRoom.tsx`, `PlayerRoom.tsx`, `Legal.tsx`, `App.tsx`, `protocol.ts`, `index.css`
+- `supabase/migrations/20261112_question_reports.sql`, `supabase/README.md`, `.env.example`, `verify/verify.mjs`
+
+### 의도적으로 하지 않은 것 · 남은 문제
+
+- 운영 마이그레이션 미적용, main 미병합, 미배포.
+- 문항 JSON 자동 패치/삭제 없음(제안 export만).
+- 검토 페이지는 공개 바닥글에 넣지 않았습니다. 주소는 `/#/review`입니다.
+- 한 난이도의 문항이 모두 숨겨지면 은행이 0이 되는 极端 경우는 별도 UX를 만들지 않았습니다.
+- 실제 휴대폰·운영 화면 실기는 하지 않았습니다(로컬 스크린샷만).
+
+### 스크린샷 (로컬)
+
+- `/workspace/church-ox-screenshots/report/01-host-report-button-1280.png`
+- `/workspace/church-ox-screenshots/report/02-host-report-dialog-1280.png`
+- `/workspace/church-ox-screenshots/report/03-host-report-thanks-1280.png`
+- `/workspace/church-ox-screenshots/report/04-student-reveal-report-390.png`
+- `/workspace/church-ox-screenshots/report/05-student-report-dialog-390.png`
+- `/workspace/church-ox-screenshots/report/06-review-login-1280.png`
+- `/workspace/church-ox-screenshots/report/07-review-list-1280.png`
+- `/workspace/church-ox-screenshots/report/08-review-suggest-1280.png`
+
+
 ## 바닥 O/X · 얼굴 표정 · 정답 반응 (2026-11-12, 브랜치 `feat/floor-ox-expressions`)
 
 - **기반**: main `bde645d`. 이 브랜치에만 로컬 커밋했습니다. push·main 병합·운영 배포·운영 Supabase 접근은 하지 않았습니다. `퀴즈검토_176문제.xlsx`는 건드리지 않았고 커밋에 없습니다.
