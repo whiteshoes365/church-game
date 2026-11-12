@@ -63,6 +63,7 @@ function Podium({ column, x }: { column: ResultColumn; x: number }) {
               nickname={m.nickname}
               target={[0, 0, 0]}
               reveal={column.winner ? 'correct' : 'idle'}
+              celebrate={column.winner}
               scale={1.25}
               facing={0}
               labelSmall

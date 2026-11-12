@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AvatarIcon } from './AvatarIcon';
+import { FloorDecal } from './FloorDecal';
 import type { PlayerPosition, PlayerSnapshot, Rect, Zones } from '../protocol';
 
 // Fallbacks mirror MAP_BOUNDS / ZONES in server/src/state.js; the server also
@@ -20,6 +21,8 @@ interface Props {
   onPickZone?: (choice: 'O' | 'X') => void;
   /** Highlights the correct zone during reveal. */
   correctAnswer?: 'O' | 'X' | null;
+  /** 정답 공개 때 맞힌 친구들 (맞히면 폴짝, 틀리면 풀이 죽는 작은 동작). */
+  correctPlayerIds?: string[];
   className?: string;
 }
 
@@ -120,7 +123,7 @@ function placeNames(
 
 /** Top-down 2D view of the quiz floor: x runs left to right, z runs top to bottom
  *  (joystick "down" = +z), so it matches what the joystick does. */
-export function PlayerMap({ bounds = DEFAULT_BOUNDS, zones = DEFAULT_ZONES, players, positions, meId, onPickZone, correctAnswer, className }: Props) {
+export function PlayerMap({ bounds = DEFAULT_BOUNDS, zones = DEFAULT_ZONES, players, positions, meId, onPickZone, correctAnswer, correctPlayerIds, className }: Props) {
   const w = bounds.xmax - bounds.xmin;
   const h = bounds.zmax - bounds.zmin;
   const fx = (x: number) => Math.max(0, Math.min(1, (x - bounds.xmin) / w));
@@ -184,7 +187,9 @@ export function PlayerMap({ bounds = DEFAULT_BOUNDS, zones = DEFAULT_ZONES, play
               height: `${((z.zmax - z.zmin) / h) * 100}%`,
             }}
           >
-            {key}
+            {/* 바닥에 깔린 O/X 타일: 이 버튼 상자 = 서버 채점 구역 */}
+            <FloorDecal shape={key} />
+            <span className="sr-only">{key}</span>
           </button>
         );
       })}
@@ -201,7 +206,9 @@ export function PlayerMap({ bounds = DEFAULT_BOUNDS, zones = DEFAULT_ZONES, play
             style={{ left: px(pos.x), top: pz(pos.z) }}
           >
             <div className="player-map-sprite" style={{ transform: `translate(-50%, -50%) translateY(${-Math.round(pos.y * 12)}px)` }}>
-              <AvatarIcon avatarId={p.avatar} cosmetics={p.cosmetics} size={mine ? ME_SIZE : OTHER_SIZE} />
+              <span className={`player-map-react ${correctAnswer && correctPlayerIds ? (correctPlayerIds.includes(p.id) ? 'cheer' : 'sad') : ''}`}>
+                <AvatarIcon avatarId={p.avatar} cosmetics={p.cosmetics} size={mine ? ME_SIZE : OTHER_SIZE} />
+              </span>
             </div>
             {name && !name.hidden && mapSize.w > 0 && (
               <span className="player-map-name" style={{ transform: `translate(-50%, 0) translate(${name.dx.toFixed(1)}px, ${name.dy.toFixed(1)}px)` }}>

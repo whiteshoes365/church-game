@@ -47,9 +47,11 @@ interface Props {
   shape: 'O' | 'X';
   origin: [number, number, number];
   reveal: RevealState;
+  /** 바닥 표시가 주인공이 되도록 뒤쪽 입체 글자는 작게 세울 수 있다. */
+  scale?: number;
 }
 
-export function LetterStructure({ shape, origin, reveal }: Props) {
+export function LetterStructure({ shape, origin, reveal, scale = 1 }: Props) {
   const cells = shape === 'O' ? O_CELLS : X_CELLS;
   const baseColor = shape === 'O' ? '#45b35c' : '#e2483d';
 
@@ -109,8 +111,10 @@ export function LetterStructure({ shape, origin, reveal }: Props) {
   });
 
   return (
-    <group ref={groupRef} position={origin}>
+    <group position={origin} scale={scale}>
+      <group ref={groupRef}>
       <instancedMesh ref={meshRef} args={[unitBoxGeometry, material, cells.length]} castShadow receiveShadow />
+      </group>
     </group>
   );
 }

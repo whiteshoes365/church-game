@@ -1,6 +1,6 @@
 // 진행자 화면(HostRoom)과 송출 화면(Display)이 함께 쓰는 "보여 주기" 조각들.
 // 여기에는 진행 버튼이 없다 — 문제·정답 띠, 3D 무대, 결과, 점수판만 그린다.
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { AvatarIcon } from './AvatarIcon';
 import { FitText } from './FitText';
 import { isWebGLAvailable } from '../three/webgl';
@@ -8,6 +8,8 @@ import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
 import type { ResultColumn } from '../three/ResultCanvas3D';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 import { questionLeftMs, questionLeftPercent } from '../roomTime';
+import { music } from '../music';
+import { FloorDecal } from './FloorDecal';
 
 const HostCanvas3D = lazy(() => import('../three/HostCanvas3D'));
 const ResultCanvas3D = lazy(() => import('../three/ResultCanvas3D'));
@@ -186,6 +188,49 @@ export function ResultTeams({ room }: { room: RoomSnapshot }) {
   );
 }
 
+const FLAT_BOUNDS = { xmin: -8, xmax: 8, zmin: -1, zmax: 9 }; // server MAP_BOUNDS (스냅샷에 없을 때만)
+
+/** 2D 대체 화면에서의 자리: 서버가 알려 준 실제 자리(x, z)가 있으면 그대로 쓴다. */
+function flatPosition(room: RoomSnapshot, player: PlayerSnapshot, pos?: PlayerPosition): { left: string; top: string } {
+  const playing = room.status === 'question' || room.status === 'reveal';
+  if (!pos || !playing) return positionFor(player);
+  const b = room.bounds ?? FLAT_BOUNDS;
+  const fx = Math.max(0, Math.min(1, (pos.x - b.xmin) / (b.xmax - b.xmin)));
+  const fz = Math.max(0, Math.min(1, (pos.z - b.zmin) / (b.zmax - b.zmin)));
+  return { left: `${(fx * 100).toFixed(2)}%`, top: `${(fz * 100).toFixed(2)}%` };
+}
+
+/** 2D 대체 화면의 바닥 O/X: 서버 채점 구역(room.zones)과 같은 자리·크기. */
+function FlatZones({ room }: { room: RoomSnapshot }) {
+  const b = room.bounds ?? FLAT_BOUNDS;
+  const zones = room.zones;
+  if (!zones) return null;
+  const w = b.xmax - b.xmin;
+  const h = b.zmax - b.zmin;
+  const answer = room.status === 'reveal' ? (room.lastResult?.correctAnswer ?? null) : null;
+  return (
+    <div className="map-zones-flat">
+      {(['O', 'X'] as const).map((key) => {
+        const z = zones[key];
+        return (
+          <div
+            key={key}
+            className={`map-zone-floor ${key.toLowerCase()} ${answer ? (answer === key ? 'correct' : 'wrong') : ''}`}
+            style={{
+              left: `${((z.xmin - b.xmin) / w) * 100}%`,
+              top: `${((z.zmin - b.zmin) / h) * 100}%`,
+              width: `${((z.xmax - z.xmin) / w) * 100}%`,
+              height: `${((z.zmax - z.zmin) / h) * 100}%`,
+            }}
+          >
+            <FloorDecal shape={key} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** 3D 무대 (WebGL 이 없으면 2D 지도). 게임이 끝나면 결과 단상. */
 export function RoomStage({ room, positions }: { room: RoomSnapshot; positions: Record<string, PlayerPosition> }) {
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
@@ -197,6 +242,22 @@ export function RoomStage({ room, positions }: { room: RoomSnapshot; positions: 
   useEffect(() => {
     if (!finished) setResultReady(false);
   }, [finished, room.id]);
+
+  // 정답 공개 순간의 효과음: 맞힌 친구가 있으면 짧은 환호, 틀린 친구가 있으면 짧은 아쉬움.
+  // 소리는 배경 음악 재생기를 거치므로 음악을 틀고 있는 화면(송출, 또는 송출이 없을 때의
+  // 진행자 화면)에서만, 음악 소리 크기대로 난다. 음악이 꺼져 있거나 0 이면 나지 않는다.
+  const revealing = room.status === 'reveal' && !!room.lastResult;
+  const wasRevealing = useRef(revealing); // 공개 도중에 화면을 연 경우에는 울리지 않는다
+  useEffect(() => {
+    if (revealing && !wasRevealing.current && room.lastResult) {
+      const correct = room.lastResult.correctPlayerIds.length;
+      const wrong = room.players.length - correct;
+      if (correct > 0) music.playSfx('cheer');
+      if (wrong > 0) music.playSfx('aww', correct > 0 ? 0.75 : 0);
+    }
+    wasRevealing.current = revealing;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealing]);
 
   const showResultLayer = finished && webglAvailable;
   const keepPlayLayer = !showResultLayer || !resultReady;
@@ -227,18 +288,11 @@ export function RoomStage({ room, positions }: { room: RoomSnapshot; positions: 
       {!webglAvailable && (
         <div className={`map-area ${MAP_CLASS[room.map]}`}>
           {room.status !== 'lobby' && room.status !== 'finished' && (
-            <div className="map-zones">
-              <div className="map-zone">
-                <div className="map-zone-sign o">O</div>
-              </div>
-              <div className="map-zone">
-                <div className="map-zone-sign x">X</div>
-              </div>
-            </div>
+            <FlatZones room={room} />
           )}
           <div className="map-avatars">
             {room.players.map((p) => {
-              const pos = positionFor(p);
+              const pos = flatPosition(room, p, positions[p.id]);
               return (
                 <div key={p.id} className="map-avatar" style={{ left: pos.left, top: pos.top }}>
                   <div className="map-avatar-sprite">
