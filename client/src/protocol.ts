@@ -255,6 +255,8 @@ export interface RoomSnapshot {
   bounds?: Rect;
   zones?: Zones;
   questionDurationMs?: number;
+  /** 이 스냅샷을 만든 순간의 서버 시각(ms). 기기 시계와의 차이를 맞추는 데 쓴다. */
+  serverNow?: number;
   question: QuestionSnapshot | null;
   lastResult: LastResult | null;
   prevQuestion?: { index: number; text: string } | null; // 진행자·리모컨만: 직전 문제 (신고용)

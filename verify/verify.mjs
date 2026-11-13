@@ -655,6 +655,7 @@ async function main() {
   verifyGaitUnit();
   verifyPauseUnit();
   await verifyFloorMarks();
+  await verifyQuestionTime();
   verifyQuestionReportsUnit();
   log(`starting server on port ${PORT}...`);
   const server = spawn(process.execPath, ['src/index.js'], {
@@ -1883,6 +1884,88 @@ async function loadClientTs(relPath) {
   const esbuild = await import('esbuild');
   const { code } = await esbuild.transform(source, { loader: 'ts', format: 'esm' });
   return import(`data:text/javascript;base64,${Buffer.from(code, 'utf8').toString('base64')}`);
+}
+
+// 문제 시간 게이지: 학생·송출·진행자·리모컨이 같은 계산을 쓰고, 기기 시계가 달라도 같은 값이 나오는지.
+async function verifyQuestionTime() {
+  log('--- question gauge: shared time math / server clock offset ---');
+  const qt = await loadClientTs('client/src/questionTime.ts');
+  const T = 1_800_000_000_000; // 서버 시계
+  const room = (q, extra = {}) => ({ status: 'question', questionDurationMs: 20000, question: { index: 0, total: 5, deadline: null, paused: false, remainingMs: null, ...q }, ...extra });
+
+  // 남은 시간·폭
+  const running = room({ deadline: T + 20000 });
+  assert(qt.questionLeftMs(running, T) === 20000 && qt.questionLeftPercent(running, T) === 100, '시작 순간에는 100%');
+  assert(qt.questionLeftMs(running, T + 5000) === 15000 && qt.questionLeftPercent(running, T + 5000) === 75, '5초 뒤 75% (방의 questionDurationMs 20초 기준)');
+  assert(qt.questionLeftPercent(running, T + 25000) === 0 && qt.questionLeftPercent(running, T - 5000) === 100, '폭은 0~100 을 벗어나지 않음');
+  assert(qt.questionLeftPercent(room({ deadline: T + 7500 }, { questionDurationMs: undefined }), T) === 50, '길이가 없으면 기본 15초');
+  const paused = room({ paused: true, remainingMs: 6000 });
+  assert(qt.questionLeftMs(paused, T) === 6000 && qt.questionLeftMs(paused, T + 99999) === 6000, '멈춘 동안에는 시간이 흘러도 남은 시간 그대로');
+  assert(qt.questionLeftPercent(paused, T + 99999) === 30, '멈춘 동안 폭 = remainingMs / 총 길이');
+  assert(qt.questionLeftMs({ ...running, status: 'reveal' }, T) === 0 && qt.questionLeftMs({ status: 'question', question: null }, T) === 0, '문제 중이 아니면 0');
+
+  // 시계 보정: 기기 시계가 달라도 서버 시계로 본 "지금"이 같다
+  qt.resetServerClock();
+  assert(qt.serverNowMs(123) === 123 && qt.serverClockOffsetMs() === 0, '표본이 없으면 기기 시계 그대로');
+  const devices = [0, 7000, -5000, 3_600_000]; // 기기 시계 - 서버 시계
+  const seen = devices.map((skew) => {
+    qt.resetServerClock();
+    qt.noteServerTime(T, T + skew + 40); // 40ms 걸려 도착
+    const clientNow = T + skew + 5000; // 서버 시계로 5초 뒤
+    return qt.questionLeftPercent(running, qt.serverNowMs(clientNow));
+  });
+  assert(seen.every((v) => Math.abs(v - seen[0]) < 1e-9), `시계가 다른 기기들의 게이지가 같음: ${seen.join(', ')}`);
+  assert(Math.abs(seen[0] - 75) <= 0.5, `보정한 게이지가 서버 기준(75%)과 0.5%p 이내: ${seen[0]}`);
+  const raw = qt.questionLeftPercent(running, T + 7000 + 5000);
+  assert(Math.abs(raw - 75) > 30, `보정이 없으면 7초 빠른 폰은 크게 어긋남 (${raw}%)`);
+
+  // 표본 고르기: 지연이 가장 적은 표본을 쓰고, 기기 시계가 바뀌면 다시 맞춘다
+  qt.resetServerClock();
+  qt.noteServerTime(T, T + 300); // 300ms 늦게 도착
+  qt.noteServerTime(T + 1000, T + 1000 + 20); // 20ms 만에 도착 → 더 정확
+  assert(qt.serverClockOffsetMs() === -20, '지연이 적은 표본으로 좁혀짐');
+  qt.noteServerTime(T + 2000, T + 2000 + 400); // 느린 표본은 무시
+  assert(qt.serverClockOffsetMs() === -20, '느리게 온 표본은 보정을 흐트러뜨리지 않음');
+  qt.noteServerTime(T + 3000, T + 3000 + 60000); // 기기 시계가 1분 앞으로 바뀜
+  assert(qt.serverClockOffsetMs() === -60000, '기기 시계가 크게 바뀌면 새로 맞춤');
+  qt.noteServerTime('x', T);
+  qt.noteServerTime(undefined, T);
+  qt.noteServerTime(NaN, T);
+  assert(qt.serverClockOffsetMs() === -60000, '서버 시각이 없는 메시지는 무시');
+  qt.resetServerClock();
+
+  // 서버 스냅샷: 모든 보기(view)에 서버 시각이 담기고, 타이머 값 자체는 서버 시계 그대로
+  const r = gameState.createRoom({ churchId: gameState.findOrCreateChurch('게이지 검증 교회').id, title: '게이지', questionSeconds: 20 });
+  gameState.startQuiz(r);
+  gameState.advanceQuestion(r, () => {});
+  for (const view of [undefined, 'display', 'host', 'remote']) {
+    const before = Date.now();
+    const snap = gameState.serializeRoom(r, view ? { view } : undefined);
+    assert(typeof snap.serverNow === 'number' && snap.serverNow >= before && snap.serverNow <= Date.now(), `스냅샷(${view ?? 'player'})에 서버 시각이 담김`);
+    assert(snap.questionDurationMs === 20000 && snap.question.deadline === r.deadline, '마감 시각·총 길이는 서버 값 그대로');
+    assert(Math.abs(qt.questionLeftPercent(snap, snap.serverNow) - 100) < 1, '스냅샷의 서버 시각으로 계산하면 갓 시작한 문제는 100%');
+  }
+  gameState.pauseQuestion(r);
+  const ps = gameState.serializeRoom(r);
+  assert(qt.questionLeftMs(ps, ps.serverNow + 50000) === ps.question.remainingMs, '멈춘 스냅샷은 remainingMs 로 고정');
+  gameState.clearTimer(r);
+
+  // 화면 소스: 네 화면이 모두 공용 계산을 쓰고, 한쪽만 따로 계산하거나 CSS 로 늦게 따라가지 않는다
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const player = read('client/src/pages/PlayerRoom.tsx');
+  assert(player.includes('<QuestionTimerBar') && player.includes('useQuestionClock'), '학생 화면이 공용 게이지·시계를 씀');
+  assert(!/deadline\s*\?\?\s*now/.test(player) && !/setInterval\(\(\) => setNow\(Date\.now\(\)\)/.test(player), '학생 화면에 따로 만든 남은 시간 계산이 없음');
+  assert(read('client/src/components/RoomStage.tsx').includes('<QuestionTimerBar'), '송출·진행자 문제 띠가 공용 게이지를 씀');
+  const bar = read('client/src/components/QuestionTimerBar.tsx');
+  assert(bar.includes('questionLeftPercent') && bar.includes('serverNowMs'), '공용 게이지는 서버 시계로 보정한 공용 계산을 씀');
+  const remote = read('client/src/pages/RemoteRoom.tsx');
+  assert(remote.includes('questionLeftMs') && remote.includes('useQuestionClock'), '리모컨 초 표시도 공용 계산을 씀');
+  assert(read('client/src/roomTime.ts').includes('serverNowMs()') && !read('client/src/roomTime.ts').includes('Date.now()'), 'useQuestionClock 은 보정한 시계를 씀');
+  assert(read('client/src/ws.ts').includes('noteServerTime(msg.room.serverNow)'), '소켓이 스냅샷의 서버 시각으로 시계를 맞춤');
+  const css = read('client/src/index.css');
+  const fillRule = css.match(/\.timer-bar-fill\s*\{[^}]*\}/)?.[0] ?? '';
+  assert(fillRule && !/transition:\s*width/.test(fillRule), '게이지 막대에 CSS 폭 전환이 없음 (기기마다 늦게 따라가지 않게)');
+  log('shared gauge math, pause freeze, clock-skew correction, serverNow in every snapshot view, all screens on shared code ok');
 }
 
 // 바닥 O/X 표시·표정·효과음: 구역 상수는 그대로이고, 바닥 표시가 채점 구역과 정확히 겹치는지.

@@ -7,7 +7,8 @@ import { isWebGLAvailable } from '../three/webgl';
 import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
 import type { ResultColumn } from '../three/ResultCanvas3D';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
-import { questionLeftMs, questionLeftPercent } from '../roomTime';
+import { questionLeftMs } from '../roomTime';
+import { QuestionTimerBar } from './QuestionTimerBar';
 import { music } from '../music';
 import { FloorDecal } from './FloorDecal';
 
@@ -69,7 +70,7 @@ function positionFor(player: PlayerSnapshot): { left: string; top: string } {
   return { left: `${5 + hx * 90}%`, top };
 }
 
-/** 문제·정답 띠: 화면 위쪽 전체 폭에 아주 크게 (3D 무대를 가리지 않게 무대 밖에 둔다). */
+/** 문제·정답 띠: 화면 위쪽 전체 폭. 큰 화면에서는 띠 : 무대 = 1 : 3 (CSS), 글자는 띠 높이에 맞춰 줄어든다. */
 export function QuestionBanners({ room, now }: { room: RoomSnapshot; now: number }) {
   const paused = !!room.question?.paused;
   return (
@@ -84,11 +85,9 @@ export function QuestionBanners({ room, now }: { room: RoomSnapshot; now: number
               <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>{CATEGORY_LABELS[room.question.category]}</span>
             )}
             {paused && <span className="badge badge-paused">잠깐 멈춤 · {Math.ceil(questionLeftMs(room, now) / 1000)}초 남음</span>}
-            <div className="timer-bar">
-              <div className="timer-bar-fill" style={{ width: `${questionLeftPercent(room, now)}%` }} />
-            </div>
+            <QuestionTimerBar room={room} />
           </div>
-          <FitText className="question-banner-text" text={room.question.text ?? ''} maxHeightRatio={0.34} minPx={30} />
+          <FitText fill className="question-banner-text" text={room.question.text ?? ''} maxHeightRatio={0.34} minPx={20} />
         </div>
       )}
 
@@ -99,7 +98,7 @@ export function QuestionBanners({ room, now }: { room: RoomSnapshot; now: number
             <b>{room.lastResult.correctAnswer}</b>
           </div>
           <div className="question-banner-body">
-            <FitText className="question-banner-text" text={room.lastResult.questionText} maxHeightRatio={0.27} minPx={30} />
+            <FitText fill className="question-banner-text" text={room.lastResult.questionText} maxHeightRatio={0.27} minPx={20} />
             {(room.lastResult.explanation || room.lastResult.category) && (
               <p className="question-banner-explanation">
                 {room.lastResult.category && (
