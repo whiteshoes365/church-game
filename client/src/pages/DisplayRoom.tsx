@@ -363,7 +363,7 @@ export function DisplayRoom() {
   const remUrl = setupCard ? remoteUrl({ joinCode: setupCard.joinCode, id: setupCard.roomId }) : room ? remoteUrl(room) : null;
 
   return (
-    <div className={`display-screen host-screen host-room-screen ${fullscreen ? 'is-fullscreen' : ''}`}>
+    <div className={`display-screen host-screen host-room-screen ${fullscreen ? 'is-fullscreen' : ''} ${room.status === 'question' || room.status === 'reveal' ? 'is-playing' : ''}`}>
       {setupOpen && setupCard && remUrl && (
         <div className="display-setup-overlay" role="dialog" aria-label="리모컨 연결 안내">
           <div className="display-setup-card card stack">
