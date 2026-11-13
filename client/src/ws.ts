@@ -1,3 +1,5 @@
+import { noteServerTime } from './questionTime';
+
 type Listener = (payload: any) => void;
 
 const WS_URL = (import.meta.env.VITE_WS_URL as string | undefined) ?? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;
@@ -45,6 +47,8 @@ class GameSocket {
       } catch {
         return;
       }
+      // 방 스냅샷에 담긴 서버 시각으로 시계 차이를 맞춘다 (문제 시간 게이지가 기기마다 같게 줄어들도록).
+      if (msg?.room && typeof msg.room.serverNow === 'number') noteServerTime(msg.room.serverNow);
       const set = this.listeners.get(msg.type);
       if (set) for (const fn of set) fn(msg);
     });

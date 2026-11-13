@@ -12,10 +12,11 @@ import { PlayerMap } from '../components/PlayerMap';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
 import { ShopPanel } from '../components/ShopPanel';
 import { LegalFooter } from '../components/LegalFooter';
+import { QuestionTimerBar } from '../components/QuestionTimerBar';
+import { questionLeftMs, useQuestionClock } from '../roomTime';
 
 const AvatarPreview3D = lazy(() => import('../three/AvatarPreview3D'));
 
-const QUESTION_DURATION_MS = 15000;
 const MOVE_SEND_INTERVAL_MS = 83; // ~12 Hz, as specified for the input throttle
 const JOYSTICK_MAX_RADIUS = 66;
 
@@ -317,7 +318,7 @@ export function PlayerRoom() {
   const [avatarConfig, setAvatarConfig] = useState<AvatarConfig>(DEFAULT_AVATAR_CONFIG);
   const avatar = useMemo(() => encodeAvatar(avatarConfig), [avatarConfig]);
   const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useQuestionClock(room);
   const [attendance, setAttendance] = useState<{ streak: number; streakBonus: number } | null>(null);
   const [gait, setGait] = useState<GaitView>(INITIAL_GAIT);
   const webglAvailable = useMemo(() => isWebGLAvailable(), []);
@@ -353,12 +354,6 @@ export function PlayerRoom() {
       offError();
     };
   }, [roomId]);
-
-  useEffect(() => {
-    if (room?.status !== 'question') return;
-    const id = setInterval(() => setNow(Date.now()), 150);
-    return () => clearInterval(id);
-  }, [room?.status]);
 
   function join() {
     if (!nickname.trim()) return;
@@ -532,16 +527,12 @@ export function PlayerRoom() {
                     {CATEGORY_LABELS[room.question.category]}
                   </span>
                 )}
+                {room.question.paused && (
+                  <span className="badge badge-paused">잠깐 멈춤 · {Math.ceil(questionLeftMs(room, now) / 1000)}초 남음</span>
+                )}
               </div>
               <p className="question-text">{room.question.text}</p>
-              <div className="timer-bar">
-                <div
-                  className="timer-bar-fill"
-                  style={{
-                    width: `${Math.max(0, Math.min(100, (((room.question.deadline ?? now) - now) / (room.questionDurationMs ?? QUESTION_DURATION_MS)) * 100))}%`,
-                  }}
-                />
-              </div>
+              <QuestionTimerBar room={room} />
             </div>
 
             <PlayerMap

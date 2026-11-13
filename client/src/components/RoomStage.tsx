@@ -7,7 +7,8 @@ import { isWebGLAvailable } from '../three/webgl';
 import type { PlayerPosition, PlayerSnapshot, RoomSnapshot } from '../protocol';
 import type { ResultColumn } from '../three/ResultCanvas3D';
 import { CATEGORY_CLASS, CATEGORY_LABELS } from '../categories';
-import { questionLeftMs, questionLeftPercent } from '../roomTime';
+import { questionLeftMs } from '../roomTime';
+import { QuestionTimerBar } from './QuestionTimerBar';
 import { music } from '../music';
 import { FloorDecal } from './FloorDecal';
 
@@ -84,9 +85,7 @@ export function QuestionBanners({ room, now }: { room: RoomSnapshot; now: number
               <span className={`badge badge-category ${CATEGORY_CLASS[room.question.category]}`}>{CATEGORY_LABELS[room.question.category]}</span>
             )}
             {paused && <span className="badge badge-paused">잠깐 멈춤 · {Math.ceil(questionLeftMs(room, now) / 1000)}초 남음</span>}
-            <div className="timer-bar">
-              <div className="timer-bar-fill" style={{ width: `${questionLeftPercent(room, now)}%` }} />
-            </div>
+            <QuestionTimerBar room={room} />
           </div>
           <FitText className="question-banner-text" text={room.question.text ?? ''} maxHeightRatio={0.34} minPx={30} />
         </div>

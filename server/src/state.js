@@ -781,6 +781,8 @@ export function serializeRoom(room, { forHost = false, view } = {}) {
     bounds: MAP_BOUNDS,
     zones: ZONES,
     questionDurationMs: room.questionDurationMs,
+    // 표시용: 클라이언트가 자기 시계와 서버 시계의 차이를 맞춘다 (타이머 자체는 서버 시계 그대로).
+    serverNow: Date.now(),
     question:
       room.status === 'question' || room.status === 'reveal'
         ? {
